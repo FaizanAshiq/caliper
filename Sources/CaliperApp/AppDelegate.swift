@@ -8,7 +8,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem?
     private var hotKeyMonitor: HotKeyMonitor?
     private var overlay: OverlayController?
-    private(set) var preferences: Preferences = .defaults
+    private var preferencesWindow: PreferencesWindowController?
+    var preferences: Preferences = .defaults
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         reloadPreferences()
@@ -43,6 +44,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             menu.addItem(NSMenuItem.separator())
         }
         menu.addItem(NSMenuItem(title: "Clear Guides", action: #selector(clearGuides), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: "Settings...", action: #selector(showPreferences), keyEquivalent: ","))
         menu.addItem(NSMenuItem.separator())
         menu.addItem(NSMenuItem(title: "Quit Caliper", action: #selector(quit), keyEquivalent: "q"))
         menu.items.forEach { $0.target = self }
@@ -55,6 +57,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// actually reaches for a feature that needs it and never before.
     @objc private func grantAccess() {
         ScreenSampler.requestAccess()
+    }
+
+    /// Changes take effect on the next arm rather than mid measurement, which is why
+    /// the overlay is handed the new values rather than rebuilt.
+    @objc private func showPreferences() {
+        if preferencesWindow == nil {
+            preferencesWindow = PreferencesWindowController(preferences: preferences) { [weak self] updated in
+                self?.preferences = updated
+                self?.overlay?.update(preferences: updated)
+                self?.hotKeyMonitor?.register(updated.hotkey)
+            }
+        }
+        preferencesWindow?.show()
     }
 
     @objc private func clearGuides() {
