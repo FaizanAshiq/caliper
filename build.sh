@@ -18,3 +18,10 @@ cp Resources/Info.plist "$APP/Contents/Info.plist"
 codesign --force --sign - "$APP"
 
 echo "Built $APP"
+
+if [ "${2:-}" = "--install" ]; then
+    DEST="${PREFIX:-/Applications}"
+    rm -rf "$DEST/Caliper.app"
+    cp -R "$APP" "$DEST/Caliper.app"
+    echo "Installed to $DEST/Caliper.app"
+fi
