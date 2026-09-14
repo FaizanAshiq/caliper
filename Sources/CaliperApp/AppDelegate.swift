@@ -6,11 +6,22 @@ import CaliperCore
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem?
+    private var hotKeyMonitor: HotKeyMonitor?
     private(set) var preferences: Preferences = .defaults
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         reloadPreferences()
         installStatusItem()
+
+        let monitor = HotKeyMonitor { [weak self] in
+            self?.toggleOverlay()
+        }
+        monitor.register(preferences.hotkey)
+        hotKeyMonitor = monitor
+    }
+
+    private func toggleOverlay() {
+        NSSound.beep()
     }
 
     func reloadPreferences() {
