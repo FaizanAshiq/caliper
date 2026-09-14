@@ -23,6 +23,8 @@ final class CanvasView: NSView {
     var onRequestResample: (() -> Void)?
 
     private var session: DrawingSession?
+    private var snappedBox: BoxRect?
+    private var snappedGaps: [Direction: Double] = [:]
     private var isConstrained = false
     private var isFromCentre = false
 
@@ -109,6 +111,10 @@ final class CanvasView: NSView {
         fatalError("CanvasView is created in code only")
     }
 
+    private var detector: EdgeDetector {
+        EdgeDetector(threshold: preferences.edgeThreshold, runLength: 3)
+    }
+
     private func localPoint(_ event: NSEvent) -> Point {
         let location = convert(event.locationInWindow, from: nil)
         return Point(x: Double(location.x), y: Double(location.y))
@@ -121,6 +127,8 @@ final class CanvasView: NSView {
     }
 
     override func mouseDown(with event: NSEvent) {
+        snappedBox = nil
+        snappedGaps = [:]
         session = DrawingSession(shape: pendingShape, anchor: localPoint(event))
         refreshHUD()
         needsDisplay = true
@@ -134,8 +142,40 @@ final class CanvasView: NSView {
 
     override func mouseUp(with event: NSEvent) {
         session?.move(to: localPoint(event))
+
+        // Under 3 points of travel reads as a click rather than a drag.
+        if let session, session.line(constrained: false).distance < 3 {
+            self.session = nil
+            snap(at: localPoint(event))
+        }
+
         refreshHUD()
         needsDisplay = true
+    }
+
+    /// Clicking without dragging asks the frame what is under the cursor: its bounds,
+    /// and the empty space between it and whatever sits either side.
+    private func snap(at point: Point) {
+        snappedBox = nil
+        snappedGaps = [:]
+
+        guard let frozenFrame else { return }
+
+        let origin = (x: Int(scale.backing(fromPoints: point.x)),
+                      y: Int(scale.backing(fromPoints: point.y)))
+
+        guard let pixels = detector.bounds(around: origin, in: frozenFrame) else { return }
+
+        snappedBox = BoxRect(
+            origin: Point(x: scale.points(fromBacking: Double(pixels.x)),
+                          y: scale.points(fromBacking: Double(pixels.y))),
+            size: Size(width: scale.points(fromBacking: Double(pixels.width)),
+                       height: scale.points(fromBacking: Double(pixels.height))))
+
+        for direction in Direction.allCases {
+            guard let gap = detector.gap(from: origin, direction: direction, in: frozenFrame) else { continue }
+            snappedGaps[direction] = scale.points(fromBacking: Double(gap))
+        }
     }
 
     /// Shift and option are read live, so the shape reshapes the moment they are held
@@ -202,6 +242,13 @@ final class CanvasView: NSView {
     }
 
     private func copyCurrentValue() {
+        if let snappedBox {
+            let text = formatter.clipboard(box: snappedBox, format: preferences.copyFormat)
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(text, forType: .string)
+            return
+        }
+
         guard let session else { return }
         let text: String
         switch session.shape {
@@ -218,6 +265,16 @@ final class CanvasView: NSView {
     }
 
     private func refreshHUD() {
+        if let snappedBox {
+            var parts = [formatter.display(box: snappedBox)]
+            if let left = snappedGaps[.left] { parts.append("left \(formatter.display(points: left))") }
+            if let right = snappedGaps[.right] { parts.append("right \(formatter.display(points: right))") }
+            hud.text = parts.joined(separator: "  ")
+            hud.anchor = NSPoint(x: snappedBox.origin.x + snappedBox.size.width,
+                                 y: snappedBox.origin.y)
+            return
+        }
+
         guard let session else {
             hud.text = ""
             return
@@ -254,6 +311,18 @@ final class CanvasView: NSView {
                 path.line(to: NSPoint(x: bounds.maxX, y: guide.position))
             }
             path.stroke()
+        }
+
+        if let snappedBox {
+            let rect = NSRect(x: snappedBox.origin.x, y: snappedBox.origin.y,
+                              width: snappedBox.size.width, height: snappedBox.size.height)
+            let snapColor = NSColor(hex: preferences.guideColorHex) ?? .systemBlue
+            snapColor.setStroke()
+            let outline = NSBezierPath(rect: rect)
+            outline.lineWidth = 1
+            outline.stroke()
+            snapColor.withAlphaComponent(0.10).setFill()
+            rect.fill()
         }
 
         guard let session else { return }
