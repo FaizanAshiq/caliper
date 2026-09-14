@@ -6,6 +6,9 @@ import CaliperCore
 /// The view is flipped so that its local coordinate space has y growing downward,
 /// matching CaliperCore. This is the single boundary where AppKit's y-grows-upward
 /// screen space is left behind, and nothing below this line should flip again.
+///
+/// All the reshaping rules live in DrawingSession, which is pure and tested. This
+/// view is the translator from AppKit events into calls on it.
 final class CanvasView: NSView {
     var onDismiss: (() -> Void)?
 
@@ -14,8 +17,19 @@ final class CanvasView: NSView {
     private let formatter: UnitFormatter
     private let hud = HUDView()
 
-    private var dragStart: Point?
-    private var dragCurrent: Point?
+    private var session: DrawingSession?
+    private var isConstrained = false
+    private var isFromCentre = false
+
+    /// Carbon virtual key codes used by the canvas.
+    private enum Key {
+        static let escape: UInt16 = 53
+        static let space: UInt16 = 49
+        static let left: UInt16 = 123
+        static let right: UInt16 = 124
+        static let down: UInt16 = 125
+        static let up: UInt16 = 126
+    }
 
     override var isFlipped: Bool { true }
     override var acceptsFirstResponder: Bool { true }
@@ -35,48 +49,92 @@ final class CanvasView: NSView {
         fatalError("CanvasView is created in code only")
     }
 
-    private var currentLine: LineMeasurement? {
-        guard let dragStart, let dragCurrent else { return nil }
-        return LineMeasurement(start: dragStart, end: dragCurrent)
-    }
-
     private func localPoint(_ event: NSEvent) -> Point {
         let location = convert(event.locationInWindow, from: nil)
         return Point(x: Double(location.x), y: Double(location.y))
     }
 
+    private func currentMouseLocation() -> Point {
+        let inWindow = window?.mouseLocationOutsideOfEventStream ?? .zero
+        let local = convert(inWindow, from: nil)
+        return Point(x: Double(local.x), y: Double(local.y))
+    }
+
     override func mouseDown(with event: NSEvent) {
-        dragStart = localPoint(event)
-        dragCurrent = dragStart
+        session = DrawingSession(shape: .line, anchor: localPoint(event))
+        refreshHUD()
         needsDisplay = true
     }
 
     override func mouseDragged(with event: NSEvent) {
-        dragCurrent = localPoint(event)
+        session?.move(to: localPoint(event))
         refreshHUD()
         needsDisplay = true
     }
 
     override func mouseUp(with event: NSEvent) {
-        dragCurrent = localPoint(event)
+        session?.move(to: localPoint(event))
+        refreshHUD()
+        needsDisplay = true
+    }
+
+    /// Shift and option are read live, so the shape reshapes the moment they are held
+    /// rather than on the next mouse move.
+    override func flagsChanged(with event: NSEvent) {
+        isConstrained = event.modifierFlags.contains(.shift)
+        isFromCentre = event.modifierFlags.contains(.option)
         refreshHUD()
         needsDisplay = true
     }
 
     override func keyDown(with event: NSEvent) {
-        // 53 is escape.
-        if event.keyCode == 53 {
+        switch event.keyCode {
+        case Key.escape:
             onDismiss?()
-            return
+        case Key.space:
+            // isARepeat guards against key repeat restarting the move on every tick.
+            if !event.isARepeat, session?.isMoving == false {
+                session?.beginMoving(from: currentMouseLocation())
+            }
+        case Key.left, Key.right, Key.up, Key.down:
+            let amount: Double = event.modifierFlags.contains(.shift) ? 10 : 1
+            switch event.keyCode {
+            case Key.left:  session?.nudge(dx: -amount, dy: 0)
+            case Key.right: session?.nudge(dx: amount, dy: 0)
+            case Key.up:    session?.nudge(dx: 0, dy: -amount)
+            default:        session?.nudge(dx: 0, dy: amount)
+            }
+            refreshHUD()
+            needsDisplay = true
+        default:
+            if event.modifierFlags.contains(.command), event.charactersIgnoringModifiers == "c" {
+                copyCurrentValue()
+                return
+            }
+            super.keyDown(with: event)
         }
-        super.keyDown(with: event)
+    }
+
+    override func keyUp(with event: NSEvent) {
+        if event.keyCode == Key.space {
+            session?.endMoving()
+        }
+    }
+
+    private func copyCurrentValue() {
+        guard let session else { return }
+        let text = formatter.clipboard(line: session.line(constrained: isConstrained),
+                                       format: preferences.copyFormat)
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
     }
 
     private func refreshHUD() {
-        guard let line = currentLine else {
+        guard let session else {
             hud.text = ""
             return
         }
+        let line = session.line(constrained: isConstrained)
         hud.text = formatter.display(line: line)
         hud.anchor = NSPoint(x: line.end.x, y: line.end.y)
     }
@@ -87,7 +145,8 @@ final class CanvasView: NSView {
         NSColor.black.withAlphaComponent(0.03).setFill()
         bounds.fill()
 
-        guard let line = currentLine else { return }
+        guard let session else { return }
+        let line = session.line(constrained: isConstrained)
 
         let color = NSColor(hex: preferences.lineColorHex) ?? .systemRed
         color.setStroke()
