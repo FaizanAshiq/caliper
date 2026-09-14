@@ -21,6 +21,7 @@ final class OverlayController {
     private var screenIDs: [CGDirectDisplayID] = []
     private var guideWindows: [NSWindow] = []
     private var preferences: Preferences
+    private let sampler = ScreenSampler()
 
     init(preferences: Preferences) {
         self.preferences = preferences
@@ -61,6 +62,7 @@ final class OverlayController {
                                     preferences: preferences,
                                     screenID: screenID)
             canvas.onDismiss = { [weak self] in self?.disarm() }
+            canvas.onRequestResample = { [weak self] in self?.refreshFrames() }
 
             window.contentView = canvas
             window.setFrame(screen.frame, display: true)
@@ -72,6 +74,18 @@ final class OverlayController {
         }
 
         NSApp.activate(ignoringOtherApps: true)
+        refreshFrames()
+    }
+
+    /// Reads every display once, then hands each canvas its own frozen frame. Nothing
+    /// blocks on this: the overlay is already up and usable before it finishes.
+    private func refreshFrames() {
+        Task { @MainActor in
+            await sampler.refresh()
+            for (window, screenID) in zip(windows, screenIDs) {
+                (window.contentView as? CanvasView)?.apply(frozenFrame: sampler.frame(for: screenID))
+            }
+        }
     }
 
     func disarm() {
@@ -80,6 +94,7 @@ final class OverlayController {
         }
         windows.removeAll()
         screenIDs.removeAll()
+        sampler.clear()
         showGuideWindows()
     }
 

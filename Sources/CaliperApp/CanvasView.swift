@@ -17,6 +17,10 @@ final class CanvasView: NSView {
     private let scale: Scale
     private let formatter: UnitFormatter
     private let hud = HUDView()
+    private let loupe = LoupeView()
+    private var frozenFrame: CapturedFrame?
+
+    var onRequestResample: (() -> Void)?
 
     private var session: DrawingSession?
     private var isConstrained = false
@@ -32,6 +36,7 @@ final class CanvasView: NSView {
         static let up: UInt16 = 126
         static let g: UInt16 = 5
         static let m: UInt16 = 46
+        static let r: UInt16 = 15
     }
 
     /// What the next drag draws. Switching it leaves the current shape alone.
@@ -53,6 +58,51 @@ final class CanvasView: NSView {
         hud.frame = bounds
         hud.autoresizingMask = [.width, .height]
         addSubview(hud)
+
+        loupe.frame = NSRect(x: 0, y: 0, width: 160, height: 160)
+        loupe.zoom = preferences.loupeZoom
+        loupe.isHidden = true
+        addSubview(loupe)
+    }
+
+    /// Nil means the display could not be read, which is the normal state until the
+    /// screen permission is granted. Everything that needs pixels stays hidden.
+    func apply(frozenFrame: CapturedFrame?) {
+        self.frozenFrame = frozenFrame
+        loupe.isHidden = frozenFrame == nil
+        needsDisplay = true
+    }
+
+    /// The cursor has to be followed with no button held, which needs a tracking area.
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        trackingAreas.forEach(removeTrackingArea)
+        addTrackingArea(NSTrackingArea(rect: bounds,
+                                       options: [.activeAlways, .mouseMoved, .inVisibleRect],
+                                       owner: self,
+                                       userInfo: nil))
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        positionLoupe(at: localPoint(event))
+    }
+
+    private func positionLoupe(at point: Point) {
+        guard let frozenFrame else {
+            loupe.isHidden = true
+            return
+        }
+        loupe.isHidden = false
+        loupe.capturedFrame = frozenFrame
+        // Points to backing pixels, because the frame was read at the display's own
+        // scale factor rather than in points.
+        loupe.centre = (x: Int(scale.backing(fromPoints: point.x)),
+                        y: Int(scale.backing(fromPoints: point.y)))
+
+        var origin = NSPoint(x: point.x + 24, y: point.y + 24)
+        if origin.x + loupe.frame.width > bounds.maxX { origin.x = point.x - loupe.frame.width - 24 }
+        if origin.y + loupe.frame.height > bounds.maxY { origin.y = point.y - loupe.frame.height - 24 }
+        loupe.setFrameOrigin(origin)
     }
 
     required init?(coder: NSCoder) {
@@ -115,6 +165,8 @@ final class CanvasView: NSView {
                 dropGuide()
             }
             needsDisplay = true
+        case Key.r:
+            onRequestResample?()
         case Key.left, Key.right, Key.up, Key.down:
             let amount: Double = event.modifierFlags.contains(.shift) ? 10 : 1
             switch event.keyCode {
