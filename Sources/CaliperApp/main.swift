@@ -1,2 +1,7 @@
-// Replaced in Task 6 by the real menu bar lifecycle.
-print("Caliper")
+import AppKit
+
+let application = NSApplication.shared
+let delegate = AppDelegate()
+application.delegate = delegate
+application.setActivationPolicy(.accessory)
+application.run()
