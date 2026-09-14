@@ -36,11 +36,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         item.button?.image?.isTemplate = true
 
         let menu = NSMenu()
+        if !ScreenSampler.isAuthorised {
+            menu.addItem(NSMenuItem(title: "Enable Loupe and Snapping",
+                                    action: #selector(grantAccess),
+                                    keyEquivalent: ""))
+            menu.addItem(NSMenuItem.separator())
+        }
+        menu.addItem(NSMenuItem(title: "Clear Guides", action: #selector(clearGuides), keyEquivalent: ""))
+        menu.addItem(NSMenuItem.separator())
         menu.addItem(NSMenuItem(title: "Quit Caliper", action: #selector(quit), keyEquivalent: "q"))
         menu.items.forEach { $0.target = self }
         item.menu = menu
 
         statusItem = item
+    }
+
+    /// Only ever reached from the menu, so the system prompt appears when the user
+    /// actually reaches for a feature that needs it and never before.
+    @objc private func grantAccess() {
+        ScreenSampler.requestAccess()
+    }
+
+    @objc private func clearGuides() {
+        GuideStore.shared.clear()
     }
 
     @objc private func quit() {

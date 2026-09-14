@@ -42,7 +42,7 @@ final class OverlayController {
         hideGuideWindows()
 
         for screen in NSScreen.screens {
-            let screenID = Self.identifier(of: screen)
+            let screenID = screen.displayID
 
             let window = OverlayWindow(contentRect: screen.frame,
                                        styleMask: .borderless,
@@ -97,7 +97,7 @@ final class OverlayController {
         hideGuideWindows()
 
         for screen in NSScreen.screens {
-            let screenID = Self.identifier(of: screen)
+            let screenID = screen.displayID
             let guides = GuideStore.shared.guides(for: screenID)
             guard !guides.isEmpty else { continue }
 
@@ -128,9 +128,5 @@ final class OverlayController {
             window.orderOut(nil)
         }
         guideWindows.removeAll()
-    }
-
-    private static func identifier(of screen: NSScreen) -> CGDirectDisplayID {
-        (screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value ?? 0
     }
 }
