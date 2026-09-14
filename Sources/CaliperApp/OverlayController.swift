@@ -10,13 +10,21 @@ final class OverlayWindow: NSWindow {
 
 /// Owns one transparent window per display. Windows join every Space so the overlay
 /// is available over full screen apps as well as the desktop.
+///
+/// Guides get their own click through window per display. They are meant to survive
+/// dismissing the overlay, so something has to keep drawing them once the measuring
+/// canvas is gone. Only one of the two is ever on screen at a time, so a guide is
+/// never drawn twice on top of itself.
 @MainActor
 final class OverlayController {
     private var windows: [NSWindow] = []
+    private var screenIDs: [CGDirectDisplayID] = []
+    private var guideWindows: [NSWindow] = []
     private var preferences: Preferences
 
     init(preferences: Preferences) {
         self.preferences = preferences
+        GuideStore.shared.onChange = { [weak self] in self?.guidesChanged() }
     }
 
     var isArmed: Bool { !windows.isEmpty }
@@ -31,8 +39,11 @@ final class OverlayController {
 
     func arm() {
         disarm()
+        hideGuideWindows()
 
         for screen in NSScreen.screens {
+            let screenID = Self.identifier(of: screen)
+
             let window = OverlayWindow(contentRect: screen.frame,
                                        styleMask: .borderless,
                                        backing: .buffered,
@@ -47,7 +58,8 @@ final class OverlayController {
 
             let canvas = CanvasView(frame: NSRect(origin: .zero, size: screen.frame.size),
                                     backingScaleFactor: screen.backingScaleFactor,
-                                    preferences: preferences)
+                                    preferences: preferences,
+                                    screenID: screenID)
             canvas.onDismiss = { [weak self] in self?.disarm() }
 
             window.contentView = canvas
@@ -56,6 +68,7 @@ final class OverlayController {
             window.makeFirstResponder(canvas)
 
             windows.append(window)
+            screenIDs.append(screenID)
         }
 
         NSApp.activate(ignoringOtherApps: true)
@@ -66,5 +79,58 @@ final class OverlayController {
             window.orderOut(nil)
         }
         windows.removeAll()
+        screenIDs.removeAll()
+        showGuideWindows()
+    }
+
+    private func guidesChanged() {
+        guard isArmed else {
+            showGuideWindows()
+            return
+        }
+        for window in windows {
+            window.contentView?.needsDisplay = true
+        }
+    }
+
+    private func showGuideWindows() {
+        hideGuideWindows()
+
+        for screen in NSScreen.screens {
+            let screenID = Self.identifier(of: screen)
+            let guides = GuideStore.shared.guides(for: screenID)
+            guard !guides.isEmpty else { continue }
+
+            let window = NSWindow(contentRect: screen.frame,
+                                  styleMask: .borderless,
+                                  backing: .buffered,
+                                  defer: false)
+            window.isOpaque = false
+            window.backgroundColor = .clear
+            window.hasShadow = false
+            window.level = .screenSaver
+            window.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary]
+            // Click through, so a guide left on screen never gets in your way.
+            window.ignoresMouseEvents = true
+
+            let view = GuideView(frame: NSRect(origin: .zero, size: screen.frame.size))
+            view.colorHex = preferences.guideColorHex
+            view.guides = guides
+            window.contentView = view
+            window.orderFront(nil)
+
+            guideWindows.append(window)
+        }
+    }
+
+    private func hideGuideWindows() {
+        for window in guideWindows {
+            window.orderOut(nil)
+        }
+        guideWindows.removeAll()
+    }
+
+    private static func identifier(of screen: NSScreen) -> CGDirectDisplayID {
+        (screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value ?? 0
     }
 }
