@@ -3,7 +3,9 @@ import Testing
 
 @Test("an edge within the tolerance clips onto the candidate")
 func clipsWhenClose() {
-    #expect(Snapping.adjustment(for: [103], candidates: [100], tolerance: 8) == -3)
+    let clip = Snapping.adjustment(for: [103], candidates: [100], tolerance: 8)
+    #expect(clip?.delta == -3)
+    #expect(clip?.candidate == 100)
 }
 
 @Test("nothing clips when every candidate is too far away")
@@ -14,12 +16,14 @@ func ignoresDistantCandidates() {
 @Test("the smallest movement wins when more than one is in range")
 func prefersTheNearest() {
     // The right edge is 1 point from a candidate, the left edge is 4 from another.
-    #expect(Snapping.adjustment(for: [100, 200], candidates: [104, 199], tolerance: 8) == -1)
+    let clip = Snapping.adjustment(for: [100, 200], candidates: [104, 199], tolerance: 8)
+    #expect(clip?.delta == -1)
+    #expect(clip?.candidate == 199)
 }
 
 @Test("an edge already sitting on a candidate does not move")
 func alreadyAligned() {
-    #expect(Snapping.adjustment(for: [100], candidates: [100], tolerance: 8) == 0)
+    #expect(Snapping.adjustment(for: [100], candidates: [100], tolerance: 8)?.delta == 0)
 }
 
 @Test("no candidates means no clipping")

@@ -16,6 +16,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// the app restarts, so this is what tells the difference between "not granted"
     /// and "granted, but this copy of the app cannot use it yet".
     private var couldReadScreenAtLaunch = false
+    private var hasOfferedScreenAccess = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         couldReadScreenAtLaunch = ScreenSampler.isAuthorised
@@ -57,14 +58,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
 
-        if !ScreenSampler.isAuthorised {
-            menu.addItem(NSMenuItem(title: "Enable Loupe and Snapping",
-                                    action: #selector(grantAccess),
-                                    keyEquivalent: ""))
-            menu.addItem(note("Needed for the loupe, the eyedropper and snapping"))
-            menu.addItem(note("Everything else already works"))
-            menu.addItem(NSMenuItem.separator())
-        } else if !couldReadScreenAtLaunch {
+        if ScreenSampler.isAuthorised, !couldReadScreenAtLaunch {
             menu.addItem(NSMenuItem(title: "Restart Caliper to Finish Enabling",
                                     action: #selector(restart),
                                     keyEquivalent: ""))
@@ -152,14 +146,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return menu
     }
 
+    /// Asked for at the point of use rather than sitting in the menu as a chore. Once
+    /// per launch, so declining it is not punished with the same box every time.
     @objc private func toggleOverlayFromMenu() {
-        toggleOverlay()
-    }
+        if !ScreenSampler.isAuthorised, !hasOfferedScreenAccess {
+            hasOfferedScreenAccess = true
 
-    /// Only ever reached from the menu, so the system prompt appears when the user
-    /// actually reaches for a feature that needs it and never before.
-    @objc private func grantAccess() {
-        ScreenSampler.requestAccess()
+            let alert = NSAlert()
+            alert.messageText = "Caliper measures without any permission"
+            alert.informativeText = "The loupe, the eyedropper, snapping to an element and clipping while you move all read what is on screen, so they need Screen Recording. The ruler, the marquee and guides do not."
+            alert.addButton(withTitle: "Enable")
+            alert.addButton(withTitle: "Not Now")
+            NSApp.activate(ignoringOtherApps: true)
+
+            if alert.runModal() == .alertFirstButtonReturn {
+                ScreenSampler.requestAccess()
+                return
+            }
+        }
+
+        toggleOverlay()
     }
 
     /// Changes take effect on the next arm rather than mid measurement, which is why

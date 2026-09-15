@@ -28,6 +28,9 @@ final class CanvasView: NSView {
     /// Where the user clicked before there was a frame to read. Held so the snap can
     /// finish itself the moment one arrives, rather than the click being swallowed.
     private var pendingSnap: Point?
+    /// What the shape is currently caught on, so it can be drawn. Without this the
+    /// clipping is invisible and indistinguishable from the shape not moving smoothly.
+    private var clipLines: (vertical: Double?, horizontal: Double?) = (nil, nil)
     private var isConstrained = false
     private var isFromCentre = false
     /// Command turns the clipping off, so a shape being moved goes exactly where the
@@ -270,6 +273,7 @@ final class CanvasView: NSView {
     /// moving away from an edge releases the shape instead of dragging the clip along.
     private func updateClipping() {
         session?.setSnapOffset(dx: 0, dy: 0)
+        clipLines = (nil, nil)
 
         guard let current = session, current.isMoving, !isFreeMove else { return }
 
@@ -290,9 +294,11 @@ final class CanvasView: NSView {
             ys = [line.start.y, line.end.y]
         }
 
-        let dx = Snapping.adjustment(for: xs, candidates: candidates.verticals) ?? 0
-        let dy = Snapping.adjustment(for: ys, candidates: candidates.horizontals) ?? 0
-        session?.setSnapOffset(dx: dx, dy: dy)
+        let horizontalClip = Snapping.adjustment(for: xs, candidates: candidates.verticals)
+        let verticalClip = Snapping.adjustment(for: ys, candidates: candidates.horizontals)
+
+        clipLines = (vertical: horizontalClip?.candidate, horizontal: verticalClip?.candidate)
+        session?.setSnapOffset(dx: horizontalClip?.delta ?? 0, dy: verticalClip?.delta ?? 0)
     }
 
     private func clipCandidates() -> (verticals: [Double], horizontals: [Double]) {
@@ -400,6 +406,23 @@ final class CanvasView: NSView {
             } else {
                 path.move(to: NSPoint(x: 0, y: guide.position))
                 path.line(to: NSPoint(x: bounds.maxX, y: guide.position))
+            }
+            path.stroke()
+        }
+
+        if clipLines.vertical != nil || clipLines.horizontal != nil {
+            let clipColor = NSColor(hex: preferences.guideColorHex) ?? .systemBlue
+            clipColor.setStroke()
+            let path = NSBezierPath()
+            path.lineWidth = 1
+            path.setLineDash([4, 3], count: 2, phase: 0)
+            if let x = clipLines.vertical {
+                path.move(to: NSPoint(x: x, y: 0))
+                path.line(to: NSPoint(x: x, y: bounds.maxY))
+            }
+            if let y = clipLines.horizontal {
+                path.move(to: NSPoint(x: 0, y: y))
+                path.line(to: NSPoint(x: bounds.maxX, y: y))
             }
             path.stroke()
         }

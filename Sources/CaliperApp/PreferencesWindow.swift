@@ -11,12 +11,15 @@ final class PreferencesWindowController: NSWindowController {
     private let zoomSlider = NSSlider(value: 8, minValue: 2, maxValue: 24, target: nil, action: nil)
     private let formatPopUp = NSPopUpButton()
     private let thresholdSlider = NSSlider(value: 0.12, minValue: 0.02, maxValue: 0.5, target: nil, action: nil)
+    private let hotKeyRecorder: HotKeyRecorderView
+    private let screenAccessButton = NSButton(title: "", target: nil, action: nil)
 
     init(preferences: Preferences, onChange: @escaping (Preferences) -> Void) {
         self.preferences = preferences
         self.onChange = onChange
+        self.hotKeyRecorder = HotKeyRecorderView(binding: preferences.hotkey)
 
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 360, height: 210),
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 380, height: 280),
                               styleMask: [.titled, .closable],
                               backing: .buffered,
                               defer: false)
@@ -35,6 +38,8 @@ final class PreferencesWindowController: NSWindowController {
         formatPopUp.addItems(withTitles: ["Value", "CSS"])
 
         let rows: [(String, NSView)] = [
+            ("Measure hotkey", hotKeyRecorder),
+            ("Screen recording", screenAccessButton),
             ("", backingPixelsCheckbox),
             ("Loupe zoom", zoomSlider),
             ("Copy as", formatPopUp),
@@ -67,10 +72,35 @@ final class PreferencesWindowController: NSWindowController {
             control.action = #selector(valueChanged)
         }
 
+        screenAccessButton.target = self
+        screenAccessButton.action = #selector(requestScreenAccess)
+        screenAccessButton.bezelStyle = .rounded
+
+        hotKeyRecorder.onRecord = { [weak self] binding in
+            guard let self else { return }
+            self.preferences.hotkey = binding
+            self.persist()
+        }
+
         window?.contentView = stack
     }
 
+    /// The button doubles as the readout, so there is one place that says whether the
+    /// screen can be read and one place to do something about it.
+    private func refreshScreenAccess() {
+        let granted = ScreenSampler.isAuthorised
+        screenAccessButton.title = granted ? "Granted" : "Enable in System Settings"
+        screenAccessButton.isEnabled = !granted
+    }
+
+    @objc private func requestScreenAccess() {
+        ScreenSampler.requestAccess()
+        refreshScreenAccess()
+    }
+
     private func loadValues() {
+        refreshScreenAccess()
+        hotKeyRecorder.binding = preferences.hotkey
         backingPixelsCheckbox.state = preferences.showBackingPixels ? .on : .off
         zoomSlider.doubleValue = Double(preferences.loupeZoom)
         formatPopUp.selectItem(at: preferences.copyFormat == .value ? 0 : 1)
@@ -82,12 +112,16 @@ final class PreferencesWindowController: NSWindowController {
         preferences.loupeZoom = Int(zoomSlider.doubleValue.rounded())
         preferences.copyFormat = formatPopUp.indexOfSelectedItem == 0 ? .value : .css
         preferences.edgeThreshold = thresholdSlider.doubleValue
+        persist()
+    }
 
+    private func persist() {
         try? preferences.save(to: Preferences.defaultFileURL)
         onChange(preferences)
     }
 
     func show() {
+        refreshScreenAccess()
         window?.center()
         showWindow(nil)
         NSApp.activate(ignoringOtherApps: true)
