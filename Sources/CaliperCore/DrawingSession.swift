@@ -55,6 +55,7 @@ public struct DrawingSession: Equatable, Sendable {
 
     public func box(constrained: Bool, fromCentre: Bool) -> BoxRect {
         let raw = BoxMeasurement.from(anchor: anchor, cursor: cursor, fromCentre: fromCentre)
-        return constrained ? BoxMeasurement.squared(raw, anchor: anchor) : raw
+        guard constrained else { return raw }
+        return BoxMeasurement.squared(raw, anchor: anchor, fromCentre: fromCentre)
     }
 }

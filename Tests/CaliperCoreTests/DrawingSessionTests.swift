@@ -59,3 +59,27 @@ func constrain() {
     line.move(to: Point(x: 100, y: 8))
     #expect(line.line(constrained: true).end.y == 0)
 }
+
+@Test("shift and option together square the box around its centre")
+func squareFromCentre() {
+    var box = DrawingSession(shape: .box, anchor: Point(x: 100, y: 100))
+    box.move(to: Point(x: 150, y: 120))
+
+    let squared = box.box(constrained: true, fromCentre: true)
+
+    // The longer half is 50, so the square is 100 a side and still centred on where
+    // the mouse went down rather than hanging off one of its corners.
+    #expect(squared.size == Size(width: 100, height: 100))
+    #expect(squared.origin == Point(x: 50, y: 50))
+}
+
+@Test("shift alone still squares from the corner the drag started at")
+func squareFromCorner() {
+    var box = DrawingSession(shape: .box, anchor: Point(x: 100, y: 100))
+    box.move(to: Point(x: 150, y: 120))
+
+    let squared = box.box(constrained: true, fromCentre: false)
+
+    #expect(squared.size == Size(width: 50, height: 50))
+    #expect(squared.origin == Point(x: 100, y: 100))
+}

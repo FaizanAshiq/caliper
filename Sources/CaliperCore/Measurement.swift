@@ -65,8 +65,20 @@ public enum BoxMeasurement {
     }
 
     /// Squares a rectangle to its longer side, which is what shift does on a marquee.
-    public static func squared(_ box: BoxRect, anchor: Point) -> BoxRect {
+    ///
+    /// `anchor` is where the mouse went down. Normally that is the corner the box is
+    /// pinned to, but with option held it is the centre instead, and squaring around
+    /// a centre is not the same operation as squaring away from a corner. Treating
+    /// the two the same leaves the square hanging off a corner while the user is
+    /// still holding option, which looks like the box jumping.
+    public static func squared(_ box: BoxRect, anchor: Point, fromCentre: Bool) -> BoxRect {
         let side = max(box.size.width, box.size.height)
+
+        if fromCentre {
+            return BoxRect(origin: Point(x: anchor.x - side / 2, y: anchor.y - side / 2),
+                           size: Size(width: side, height: side))
+        }
+
         let growsRight = box.origin.x >= anchor.x
         let growsDown = box.origin.y >= anchor.y
         let x = growsRight ? anchor.x : anchor.x - side
