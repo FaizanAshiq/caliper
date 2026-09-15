@@ -171,6 +171,7 @@ final class CanvasView: NSView {
     override func mouseUp(with event: NSEvent) {
         session?.move(to: localPoint(event))
         isDrawing = false
+        clearClipLines()
 
         // Under 3 points of travel reads as a click rather than a drag.
         if let session, session.line(constrained: false).distance < 3 {
@@ -264,7 +265,17 @@ final class CanvasView: NSView {
     override func keyUp(with event: NSEvent) {
         if event.keyCode == Key.space {
             session?.endMoving()
+            clearClipLines()
         }
+    }
+
+    /// The dashed lines say what the shape is catching on right now. Once it stops
+    /// moving it is not catching on anything, so leaving them up would read as the
+    /// shape still being stuck to an edge it is free of.
+    private func clearClipLines() {
+        guard clipLines.vertical != nil || clipLines.horizontal != nil else { return }
+        clipLines = (nil, nil)
+        needsDisplay = true
     }
 
     /// While a shape is being moved with space, clip its edges onto anything nearby:
