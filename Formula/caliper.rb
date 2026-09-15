@@ -9,6 +9,7 @@ class Caliper < Formula
   def install
     system "./build.sh", "release"
     prefix.install "dist/Caliper.app"
+    prefix.install "scripts"
   end
 
   def caveats
@@ -17,6 +18,9 @@ class Caliper < Formula
 
       Open it with:
         open #{prefix}/Caliper.app
+
+      Run this once so upgrades keep the permission you grant:
+        #{prefix}/scripts/signing-identity.sh
 
       The ruler, marquee and guides need no permissions. The loupe, eyedropper
       and edge snapping need Screen Recording, which Caliper asks for only when

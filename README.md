@@ -36,7 +36,8 @@ why that matters.
 | --- | --- |
 | `Control+Shift+M` | Arm or dismiss the overlay |
 | `Shift` while drawing | Constrain to 0, 45 or 90 degrees, or square the marquee |
-| `Space` while drawing | Reposition the whole shape, size and angle locked |
+| `Space` while drawing | Reposition the whole shape, size and angle locked. It clips onto guides, screen edges and the element under the cursor |
+| `Cmd` while repositioning | Move freely, ignoring anything the shape would otherwise clip onto |
 | `Option` while drawing | Draw the marquee out from its centre |
 | Arrow keys | Nudge the active endpoint by 1 pt |
 | `Shift` plus arrow keys | Nudge by 10 pt |
@@ -63,15 +64,17 @@ The ruler, the marquee, guides, nudging and copying need no permissions at all, 
 nothing is requested when you launch.
 
 The loupe, the eyedropper and edge snapping read what is on screen, so they need
-Screen Recording. Caliper asks the first time you reach for one, from the menu bar
-item, and stays useful if you say no.
+Screen Recording. Caliper asks the first time you click Measure without it, once per
+launch, and you can grant it later from Settings. Say no and everything else still
+works.
 
 ## Settings
 
-Four settings live in the menu under Settings. Everything else, including the hotkey,
-is in `~/Library/Application Support/Caliper/preferences.json`. Every key in that file
-is optional, so you can delete down to the one line you care about and the rest falls
-back to defaults.
+Settings holds the measure hotkey, which you set by clicking the field and pressing a
+combination, the Screen Recording switch, and four appearance and behaviour options.
+Everything else is in `~/Library/Application Support/Caliper/preferences.json`, and
+every key in that file is optional, so you can delete down to the one line you care
+about and the rest falls back to defaults.
 
 ## Building
 
@@ -99,9 +102,17 @@ Quarantine is only applied to downloaded files. Building on your own machine
 skips all of that, which is why the Homebrew formula compiles rather than
 pulling a binary.
 
-One consequence worth knowing: an ad hoc signature is a hash of the binary, so
-every upgrade looks like a new app to macOS and Screen Recording has to be
-granted again. That goes away if Caliper ever gets a Developer ID.
+One consequence is worth knowing about. An ad hoc signature is a hash of the
+binary, so every upgrade looks like a new app to macOS and Screen Recording has
+to be granted all over again. Run this once and that stops happening:
+
+```bash
+./scripts/signing-identity.sh
+```
+
+It makes a self signed certificate in your login keychain and `build.sh` signs
+with it from then on, which keeps the identity fixed across builds. It is not a
+Developer ID and changes nothing for anyone else.
 
 ## License
 
