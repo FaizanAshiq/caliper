@@ -15,6 +15,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         reloadPreferences()
         installStatusItem()
         overlay = OverlayController(preferences: preferences)
+        overlay?.warmUp()
 
         let monitor = HotKeyMonitor { [weak self] in
             self?.toggleOverlay()

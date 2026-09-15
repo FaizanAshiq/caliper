@@ -25,6 +25,9 @@ final class CanvasView: NSView {
     private var session: DrawingSession?
     private var snappedBox: BoxRect?
     private var snappedGaps: [Direction: Double] = [:]
+    /// Where the user clicked before there was a frame to read. Held so the snap can
+    /// finish itself the moment one arrives, rather than the click being swallowed.
+    private var pendingSnap: Point?
     private var isConstrained = false
     private var isFromCentre = false
 
@@ -72,6 +75,13 @@ final class CanvasView: NSView {
     func apply(frozenFrame: CapturedFrame?) {
         self.frozenFrame = frozenFrame
         loupe.isHidden = frozenFrame == nil
+
+        if frozenFrame != nil, let point = pendingSnap {
+            pendingSnap = nil
+            snap(at: point)
+            refreshHUD()
+        }
+
         needsDisplay = true
     }
 
@@ -129,6 +139,7 @@ final class CanvasView: NSView {
     override func mouseDown(with event: NSEvent) {
         snappedBox = nil
         snappedGaps = [:]
+        pendingSnap = nil
         session = DrawingSession(shape: pendingShape, anchor: localPoint(event))
         refreshHUD()
         needsDisplay = true
@@ -159,7 +170,10 @@ final class CanvasView: NSView {
         snappedBox = nil
         snappedGaps = [:]
 
-        guard let frozenFrame else { return }
+        guard let frozenFrame else {
+            pendingSnap = point
+            return
+        }
 
         let origin = (x: Int(scale.backing(fromPoints: point.x)),
                       y: Int(scale.backing(fromPoints: point.y)))

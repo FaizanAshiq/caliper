@@ -30,6 +30,11 @@ final class OverlayController {
 
     var isArmed: Bool { !windows.isEmpty }
 
+    /// Called once at launch. See ScreenSampler.warmUp for why.
+    func warmUp() {
+        Task { @MainActor in await sampler.warmUp() }
+    }
+
     func update(preferences: Preferences) {
         self.preferences = preferences
     }

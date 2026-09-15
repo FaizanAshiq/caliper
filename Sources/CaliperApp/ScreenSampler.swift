@@ -32,6 +32,19 @@ final class ScreenSampler {
         frames[screenID]
     }
 
+    /// Pays the one off ScreenCaptureKit setup cost at launch.
+    ///
+    /// The first call after launch takes several seconds to bring the service up.
+    /// Until it returns there is no frame, so the loupe stays hidden and a click that
+    /// should snap silently does nothing, with no way for the user to tell why. Doing
+    /// it once at launch makes the first arm as quick as every one after it. It reads
+    /// no pixels, only the list of shareable displays, and it is skipped entirely
+    /// without permission so nothing is ever prompted.
+    func warmUp() async {
+        guard Self.isAuthorised else { return }
+        _ = try? await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
+    }
+
     func clear() {
         frames.removeAll()
     }
