@@ -48,3 +48,21 @@ func missingFile() throws {
         .appendingPathComponent("caliper-absent-\(UUID().uuidString).json")
     #expect(try Preferences.load(from: url) == Preferences.defaults)
 }
+
+@Test("a binding reads as the keys you actually press")
+func hotkeyDisplay() {
+    #expect(Preferences.defaults.hotkey.displayString == "⌃⇧M")
+    #expect(HotKeyBinding(keyCode: 8, modifiers: [.command]).displayString == "⌘C")
+    #expect(HotKeyBinding(keyCode: 49, modifiers: [.option, .command]).displayString == "⌥⌘Space")
+}
+
+@Test("modifiers read in the order macOS prints them, whatever order they are stored")
+func hotkeyModifierOrder() {
+    let stored = HotKeyBinding(keyCode: 46, modifiers: [.shift, .control])
+    #expect(stored.displayString == "⌃⇧M")
+}
+
+@Test("an unknown key code still produces something readable")
+func hotkeyUnknownKey() {
+    #expect(HotKeyBinding(keyCode: 250, modifiers: []).displayString == "Key 250")
+}
