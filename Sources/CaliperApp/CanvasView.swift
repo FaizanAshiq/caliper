@@ -30,6 +30,10 @@ final class CanvasView: NSView {
     private var pendingSnap: Point?
     private var isConstrained = false
     private var isFromCentre = false
+    /// True only between mouse down and mouse up. Once the button is released the
+    /// measurement is finished, and letting go of shift afterwards must not reshape
+    /// the line that is already sitting on screen with a number attached to it.
+    private var isDrawing = false
 
     /// Carbon virtual key codes used by the canvas.
     private enum Key {
@@ -140,6 +144,11 @@ final class CanvasView: NSView {
         snappedBox = nil
         snappedGaps = [:]
         pendingSnap = nil
+        isDrawing = true
+        // Read the modifiers held at the moment of the click rather than trusting
+        // what the last flagsChanged left behind, which may be from an earlier drag.
+        isConstrained = event.modifierFlags.contains(.shift)
+        isFromCentre = event.modifierFlags.contains(.option)
         session = DrawingSession(shape: pendingShape, anchor: localPoint(event))
         refreshHUD()
         needsDisplay = true
@@ -153,6 +162,7 @@ final class CanvasView: NSView {
 
     override func mouseUp(with event: NSEvent) {
         session?.move(to: localPoint(event))
+        isDrawing = false
 
         // Under 3 points of travel reads as a click rather than a drag.
         if let session, session.line(constrained: false).distance < 3 {
@@ -195,6 +205,7 @@ final class CanvasView: NSView {
     /// Shift and option are read live, so the shape reshapes the moment they are held
     /// rather than on the next mouse move.
     override func flagsChanged(with event: NSEvent) {
+        guard isDrawing else { return }
         isConstrained = event.modifierFlags.contains(.shift)
         isFromCentre = event.modifierFlags.contains(.option)
         refreshHUD()
