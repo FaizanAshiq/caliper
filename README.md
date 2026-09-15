@@ -4,7 +4,7 @@ A menu bar app that measures distances on screen, in the same logical points you
 code is written in. Press Control+Shift+M anywhere, drag, and the number is on your
 clipboard.
 
-![Caliper measuring a gap between two buttons](docs/screenshot.png)
+<!-- Image goes here once there is one -->
 
 ## Install
 
