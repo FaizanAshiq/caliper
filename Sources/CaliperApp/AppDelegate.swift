@@ -134,6 +134,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         row("Hold shift to constrain to 45 degrees")
         row("Hold space to move the shape without resizing it")
+        row("While moving it clips to guides, edges and the element under it")
+        row("Hold command while moving to ignore the clipping")
         row("Hold option to draw a box from its centre")
         row("Arrow keys nudge by 1 point, with shift by 10")
         menu.addItem(NSMenuItem.separator())

@@ -30,6 +30,9 @@ final class CanvasView: NSView {
     private var pendingSnap: Point?
     private var isConstrained = false
     private var isFromCentre = false
+    /// Command turns the clipping off, so a shape being moved goes exactly where the
+    /// mouse goes instead of catching on nearby edges.
+    private var isFreeMove = false
     /// True only between mouse down and mouse up. Once the button is released the
     /// measurement is finished, and letting go of shift afterwards must not reshape
     /// the line that is already sitting on screen with a number attached to it.
@@ -149,6 +152,7 @@ final class CanvasView: NSView {
         // what the last flagsChanged left behind, which may be from an earlier drag.
         isConstrained = event.modifierFlags.contains(.shift)
         isFromCentre = event.modifierFlags.contains(.option)
+        isFreeMove = event.modifierFlags.contains(.command)
         session = DrawingSession(shape: pendingShape, anchor: localPoint(event))
         refreshHUD()
         needsDisplay = true
@@ -156,6 +160,7 @@ final class CanvasView: NSView {
 
     override func mouseDragged(with event: NSEvent) {
         session?.move(to: localPoint(event))
+        updateClipping()
         refreshHUD()
         needsDisplay = true
     }
@@ -208,6 +213,8 @@ final class CanvasView: NSView {
         guard isDrawing else { return }
         isConstrained = event.modifierFlags.contains(.shift)
         isFromCentre = event.modifierFlags.contains(.option)
+        isFreeMove = event.modifierFlags.contains(.command)
+        updateClipping()
         refreshHUD()
         needsDisplay = true
     }
@@ -255,6 +262,65 @@ final class CanvasView: NSView {
         if event.keyCode == Key.space {
             session?.endMoving()
         }
+    }
+
+    /// While a shape is being moved with space, clip its edges onto anything nearby:
+    /// the guides, the edges of the screen, and the element under the cursor. Holding
+    /// command turns it off. The offset is recomputed from scratch on every move, so
+    /// moving away from an edge releases the shape instead of dragging the clip along.
+    private func updateClipping() {
+        session?.setSnapOffset(dx: 0, dy: 0)
+
+        guard let current = session, current.isMoving, !isFreeMove else { return }
+
+        let candidates = clipCandidates()
+        guard !candidates.verticals.isEmpty || !candidates.horizontals.isEmpty else { return }
+
+        let xs: [Double]
+        let ys: [Double]
+
+        switch current.shape {
+        case .box:
+            let box = current.box(constrained: isConstrained, fromCentre: isFromCentre)
+            xs = [box.origin.x, box.origin.x + box.size.width]
+            ys = [box.origin.y, box.origin.y + box.size.height]
+        case .line:
+            let line = current.line(constrained: isConstrained)
+            xs = [line.start.x, line.end.x]
+            ys = [line.start.y, line.end.y]
+        }
+
+        let dx = Snapping.adjustment(for: xs, candidates: candidates.verticals) ?? 0
+        let dy = Snapping.adjustment(for: ys, candidates: candidates.horizontals) ?? 0
+        session?.setSnapOffset(dx: dx, dy: dy)
+    }
+
+    private func clipCandidates() -> (verticals: [Double], horizontals: [Double]) {
+        var verticals: [Double] = [0, Double(bounds.maxX)]
+        var horizontals: [Double] = [0, Double(bounds.maxY)]
+
+        for guide in GuideStore.shared.guides(for: screenID) {
+            switch guide.axis {
+            case .vertical: verticals.append(guide.position)
+            case .horizontal: horizontals.append(guide.position)
+            }
+        }
+
+        // The element under the cursor, when the screen can be read at all. This is
+        // what makes the shape catch on a real button rather than only on guides.
+        if let frozenFrame {
+            let point = currentMouseLocation()
+            let origin = (x: Int(scale.backing(fromPoints: point.x)),
+                          y: Int(scale.backing(fromPoints: point.y)))
+            if let pixels = detector.bounds(around: origin, in: frozenFrame) {
+                verticals.append(scale.points(fromBacking: Double(pixels.x)))
+                verticals.append(scale.points(fromBacking: Double(pixels.x + pixels.width)))
+                horizontals.append(scale.points(fromBacking: Double(pixels.y)))
+                horizontals.append(scale.points(fromBacking: Double(pixels.y + pixels.height)))
+            }
+        }
+
+        return (verticals, horizontals)
     }
 
     private func dropGuide() {
