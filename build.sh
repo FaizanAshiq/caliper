@@ -4,7 +4,11 @@ set -euo pipefail
 CONFIG="${1:-release}"
 APP="dist/Caliper.app"
 
-swift build -c "$CONFIG"
+# --disable-sandbox because Swift Package Manager sandboxes the manifest compile, and
+# that cannot nest inside another sandbox: under Homebrew it fails with
+# "sandbox_apply: Operation not permitted". Nothing is lost here, since the package has
+# no dependencies and so no third party manifest to isolate.
+swift build -c "$CONFIG" --disable-sandbox
 
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
@@ -19,9 +23,10 @@ cp Resources/Info.plist "$APP/Contents/Info.plist"
 # by Gatekeeper, which is why Caliper is installed from source.
 IDENTITY="${CALIPER_SIGN_IDENTITY:-Caliper Local Signing}"
 
-if security find-identity -p codesigning | grep -qF "$IDENTITY"; then
-    codesign --force --sign "$IDENTITY" "$APP"
-else
+if ! security find-identity -p codesigning | grep -qF "$IDENTITY" \
+    || ! codesign --force --sign "$IDENTITY" "$APP" 2>/dev/null; then
+    # No identity, or the keychain is out of reach, which is the case inside a build
+    # sandbox. Ad hoc still produces a working app, it just loses the stable identity.
     codesign --force --sign - "$APP"
 fi
 

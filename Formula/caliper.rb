@@ -2,7 +2,7 @@ class Caliper < Formula
   desc "Menu bar tool for measuring distances on screen"
   homepage "https://github.com/FaizanAshiq/caliper"
   url "https://github.com/FaizanAshiq/caliper/archive/refs/tags/v0.1.0.tar.gz"
-  sha256 "REPLACE_WITH_THE_TARBALL_SHA256"
+  sha256 "786044f0988d558823ceea64d32280b4beab9f1a671f05b0612d4f5859d1aa11"
   license "MIT"
   depends_on macos: :sonoma
 
@@ -19,8 +19,11 @@ class Caliper < Formula
       Open it with:
         open #{prefix}/Caliper.app
 
-      Run this once so upgrades keep the permission you grant:
+      Homebrew builds in a sandbox that cannot reach your keychain, so this copy
+      is signed ad hoc and macOS forgets Screen Recording on every upgrade. Two
+      commands fix that for good:
         #{prefix}/scripts/signing-identity.sh
+        codesign --force --sign "Caliper Local Signing" #{prefix}/Caliper.app
 
       The ruler, marquee and guides need no permissions. The loupe, eyedropper
       and edge snapping need Screen Recording, which Caliper asks for only when
