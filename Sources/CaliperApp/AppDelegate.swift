@@ -107,41 +107,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     /// A reference list, not a set of commands: every row has no action, so nothing
     /// here can be clicked or fired by accident. autoenablesItems is off so the rows
-    /// read as text rather than as a menu full of unavailable options.
+    /// read as text rather than as a menu full of unavailable options. The rows come
+    /// from CaliperCore, the same list the overlay strip draws.
     private func buildShortcutsMenu() -> NSMenu {
         let menu = NSMenu()
         menu.autoenablesItems = false
+        menu.addItem(NSMenuItem(title: "While the overlay is open", action: nil, keyEquivalent: ""))
 
-        func row(_ title: String, _ key: String = "", _ mask: NSEvent.ModifierFlags = []) {
-            let item = NSMenuItem(title: title, action: nil, keyEquivalent: key)
-            item.keyEquivalentModifierMask = mask
-            menu.addItem(item)
+        for group in Shortcuts.groups {
+            menu.addItem(NSMenuItem.separator())
+            for shortcut in group {
+                menu.addItem(NSMenuItem(title: shortcut.detail, action: nil, keyEquivalent: ""))
+            }
         }
-
-        row("While the overlay is open")
-        menu.addItem(NSMenuItem.separator())
-
-        row("Drag to measure a line")
-        row("Click to snap to what is under the cursor")
-        row("Switch what the next drag draws", "m")
-        menu.addItem(NSMenuItem.separator())
-
-        row("Hold shift to constrain to 45 degrees")
-        row("Hold space to move the shape without resizing it")
-        row("While moving it clips to guides, edges and the element under it")
-        row("Hold command while moving to ignore the clipping")
-        row("Hold option to draw a box from its centre")
-        row("Arrow keys nudge by 1 point, with shift by 10")
-        menu.addItem(NSMenuItem.separator())
-
-        row("Drop a guide", "g")
-        row("Drop a horizontal guide", "g", .option)
-        row("Clear every guide", "g", .shift)
-        menu.addItem(NSMenuItem.separator())
-
-        row("Re-read the screen", "r")
-        row("Copy the value", "c", .command)
-        row("Dismiss", "\u{1b}")
 
         return menu
     }

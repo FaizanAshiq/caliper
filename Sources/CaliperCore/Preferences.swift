@@ -63,6 +63,10 @@ public struct Preferences: Equatable, Sendable, Codable {
     public var copyFormat: CopyFormat
     /// Luminance difference, 0 to 1, that counts as an element boundary.
     public var edgeThreshold: Double
+    /// Whether the overlay shows the strip of shortcuts along the bottom. On until
+    /// someone presses H, because a first run with no hint of what the keys do is
+    /// worse than a strip an experienced user turns off once.
+    public var showShortcuts: Bool
 
     public static let defaults = Preferences(
         hotkey: HotKeyBinding(keyCode: 46, modifiers: [.control, .shift]),
@@ -71,7 +75,8 @@ public struct Preferences: Equatable, Sendable, Codable {
         guideColorHex: "0A84FF",
         loupeZoom: 8,
         copyFormat: .value,
-        edgeThreshold: 0.12
+        edgeThreshold: 0.12,
+        showShortcuts: true
     )
 
     public init(hotkey: HotKeyBinding,
@@ -80,7 +85,8 @@ public struct Preferences: Equatable, Sendable, Codable {
                 guideColorHex: String,
                 loupeZoom: Int,
                 copyFormat: CopyFormat,
-                edgeThreshold: Double) {
+                edgeThreshold: Double,
+                showShortcuts: Bool) {
         self.hotkey = hotkey
         self.showBackingPixels = showBackingPixels
         self.lineColorHex = lineColorHex
@@ -88,6 +94,7 @@ public struct Preferences: Equatable, Sendable, Codable {
         self.loupeZoom = loupeZoom
         self.copyFormat = copyFormat
         self.edgeThreshold = edgeThreshold
+        self.showShortcuts = showShortcuts
     }
 
     /// Every key is optional on the way in so that a file written by an older
@@ -102,6 +109,7 @@ public struct Preferences: Equatable, Sendable, Codable {
         loupeZoom = try container.decodeIfPresent(Int.self, forKey: .loupeZoom) ?? fallback.loupeZoom
         copyFormat = try container.decodeIfPresent(CopyFormat.self, forKey: .copyFormat) ?? fallback.copyFormat
         edgeThreshold = try container.decodeIfPresent(Double.self, forKey: .edgeThreshold) ?? fallback.edgeThreshold
+        showShortcuts = try container.decodeIfPresent(Bool.self, forKey: .showShortcuts) ?? fallback.showShortcuts
     }
 
     public static var defaultFileURL: URL {

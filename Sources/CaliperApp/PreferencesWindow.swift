@@ -116,6 +116,11 @@ final class PreferencesWindowController: NSWindowController {
     }
 
     private func persist() {
+        // The overlay writes showShortcuts when someone presses H, possibly while this
+        // window is open. Saving a copy taken when the window opened would undo that.
+        if let onDisk = try? Preferences.load(from: Preferences.defaultFileURL) {
+            preferences.showShortcuts = onDisk.showShortcuts
+        }
         try? preferences.save(to: Preferences.defaultFileURL)
         onChange(preferences)
     }

@@ -68,6 +68,7 @@ final class OverlayController {
                                     screenID: screenID)
             canvas.onDismiss = { [weak self] in self?.disarm() }
             canvas.onRequestResample = { [weak self] in self?.refreshFrames() }
+            canvas.onToggleShortcuts = { [weak self] in self?.toggleShortcuts() }
 
             window.contentView = canvas
             window.setFrame(screen.frame, display: true)
@@ -80,6 +81,16 @@ final class OverlayController {
 
         NSApp.activate(ignoringOtherApps: true)
         refreshFrames()
+    }
+
+    /// One display's worth of keystroke, every display's worth of effect. Written to
+    /// disk as well, so turning the strip off is a decision and not a per launch chore.
+    private func toggleShortcuts() {
+        preferences.showShortcuts.toggle()
+        try? preferences.save(to: Preferences.defaultFileURL)
+        for window in windows {
+            (window.contentView as? CanvasView)?.setShortcuts(visible: preferences.showShortcuts)
+        }
     }
 
     /// Reads every display once, then hands each canvas its own frozen frame. Nothing
