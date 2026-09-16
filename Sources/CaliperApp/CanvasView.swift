@@ -447,6 +447,9 @@ final class CanvasView: NSView {
         let point = currentMouseLocation()
         copy(frozenFrame.hexString(x: Int(scale.backing(fromPoints: point.x)),
                                    y: Int(scale.backing(fromPoints: point.y))))
+        // Picking a colour is a one shot errand: having it is the end of it. A
+        // measurement is not, because you may still want to nudge it or copy it again.
+        onDismiss?()
     }
 
     private func copy(_ text: String) {

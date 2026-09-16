@@ -55,7 +55,7 @@ public enum Shortcuts {
         Shortcut(keys: "R", action: "re-read",
                  detail: "Press R to re-read the screen", group: 3),
         Shortcut(keys: "⌘C", action: "copy",
-                 detail: "Press command C to copy the measurement, or the colour when the loupe is showing", group: 3),
+                 detail: "Press command C to copy the measurement, or the colour when the loupe is showing, which also closes the overlay", group: 3),
         Shortcut(keys: "H", action: "hide these",
                  detail: "Press H to hide this list on the overlay", group: 3),
         Shortcut(keys: "⎋", action: "clear or dismiss",

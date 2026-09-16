@@ -31,7 +31,7 @@ why that matters.
 | Marquee box | Press `M` to switch, then drag | Width by height |
 | Edge snap | Click without dragging | Bounds of the element under the cursor, and the gaps to its neighbours |
 | Guide | Press `G` | A line that stays on screen after the overlay closes |
-| Colour | Hover with nothing drawn | The loupe magnifies the pixels and reads the hex, and `Cmd+C` takes it |
+| Colour | Hover with nothing drawn | The loupe magnifies the pixels and reads the hex. `Cmd+C` takes it and closes the overlay |
 
 | Input | Effect |
 | --- | --- |
@@ -46,7 +46,7 @@ why that matters.
 | `Shift+G` | Clear every guide |
 | `R` | Re-read the screen |
 | `H` | Hide the strip of shortcuts along the bottom of the overlay |
-| `Cmd+C` | Copy the measurement, or the colour when the loupe is showing |
+| `Cmd+C` | Copy the measurement, or the colour when the loupe is showing. Copying a colour closes the overlay |
 | `Esc` | Clear what is drawn, then again to dismiss |
 
 ## What the numbers mean
