@@ -29,6 +29,9 @@ public enum Shortcuts {
                  detail: "Drag to measure a line", group: 0),
         Shortcut(keys: "click", action: "element",
                  detail: "Click to snap to what is under the cursor", group: 0),
+        Shortcut(keys: "hover", action: "colour",
+                 detail: "The loupe reads the colour under the cursor whenever nothing is drawn",
+                 group: 0),
         Shortcut(keys: "M", action: "line or box",
                  detail: "Press M to switch what the next drag draws", group: 0),
 
@@ -52,11 +55,11 @@ public enum Shortcuts {
         Shortcut(keys: "R", action: "re-read",
                  detail: "Press R to re-read the screen", group: 3),
         Shortcut(keys: "⌘C", action: "copy",
-                 detail: "Press command C to copy the value", group: 3),
+                 detail: "Press command C to copy the measurement, or the colour when the loupe is showing", group: 3),
         Shortcut(keys: "H", action: "hide these",
                  detail: "Press H to hide this list on the overlay", group: 3),
-        Shortcut(keys: "⎋", action: "dismiss",
-                 detail: "Press escape to dismiss", group: 3),
+        Shortcut(keys: "⎋", action: "clear or dismiss",
+                 detail: "Press escape to clear what is drawn, then again to dismiss", group: 3),
     ]
 
     /// The list split into its blocks, in order, for anything that draws a separator
