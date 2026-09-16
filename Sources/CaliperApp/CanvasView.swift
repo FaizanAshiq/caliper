@@ -18,9 +18,13 @@ final class CanvasView: NSView {
     private let formatter: UnitFormatter
     private let hud = HUDView()
     private let loupe = LoupeView()
+    private let shortcuts = ShortcutsView()
     private var frozenFrame: CapturedFrame?
 
     var onRequestResample: (() -> Void)?
+    /// Handed upwards rather than done here, because the strip has to disappear on
+    /// every display at once and the choice has to outlive the overlay.
+    var onToggleShortcuts: (() -> Void)?
 
     private var session: DrawingSession?
     private var snappedBox: BoxRect?
@@ -36,6 +40,9 @@ final class CanvasView: NSView {
     /// Command turns the clipping off, so a shape being moved goes exactly where the
     /// mouse goes instead of catching on nearby edges.
     private var isFreeMove = false
+    /// Whether the user wants the strip at all, separately from whether it is being
+    /// held back for the duration of a drag.
+    private var shortcutsWanted = true
     /// True only between mouse down and mouse up. Once the button is released the
     /// measurement is finished, and letting go of shift afterwards must not reshape
     /// the line that is already sitting on screen with a number attached to it.
@@ -50,6 +57,7 @@ final class CanvasView: NSView {
         static let down: UInt16 = 125
         static let up: UInt16 = 126
         static let g: UInt16 = 5
+        static let h: UInt16 = 4
         static let m: UInt16 = 46
         static let r: UInt16 = 15
     }
@@ -78,13 +86,36 @@ final class CanvasView: NSView {
         loupe.zoom = preferences.loupeZoom
         loupe.isHidden = true
         addSubview(loupe)
+
+        // Added last so it draws over the loupe rather than under it, on the rare
+        // occasion the cursor is down at the bottom of the screen.
+        shortcutsWanted = preferences.showShortcuts
+        shortcuts.isHidden = !shortcutsWanted
+        addSubview(shortcuts)
+    }
+
+    override func layout() {
+        super.layout()
+        shortcuts.reflow(maxWidth: bounds.width * 0.75)
+        shortcuts.setFrameOrigin(NSPoint(x: (bounds.width - shortcuts.frame.width) / 2,
+                                         y: bounds.maxY - shortcuts.frame.height - 32))
+    }
+
+    /// Called for every canvas when the strip is toggled on any one of them.
+    func setShortcuts(visible: Bool) {
+        shortcutsWanted = visible
+        updateShortcuts()
+    }
+
+    private func updateShortcuts() {
+        shortcuts.isHidden = isDrawing || !shortcutsWanted
     }
 
     /// Nil means the display could not be read, which is the normal state until the
     /// screen permission is granted. Everything that needs pixels stays hidden.
     func apply(frozenFrame: CapturedFrame?) {
         self.frozenFrame = frozenFrame
-        loupe.isHidden = frozenFrame == nil
+        loupe.isHidden = frozenFrame == nil || isDrawing
 
         if frozenFrame != nil, let point = pendingSnap {
             pendingSnap = nil
@@ -151,6 +182,11 @@ final class CanvasView: NSView {
         snappedGaps = [:]
         pendingSnap = nil
         isDrawing = true
+        // The loupe helps you find the spot, not read the answer. It cannot follow the
+        // cursor during a drag anyway, because mouseMoved stops firing once a button is
+        // down, so it would sit there stale on top of the readout it is covering.
+        loupe.isHidden = true
+        updateShortcuts()
         // Read the modifiers held at the moment of the click rather than trusting
         // what the last flagsChanged left behind, which may be from an earlier drag.
         isConstrained = event.modifierFlags.contains(.shift)
@@ -172,6 +208,8 @@ final class CanvasView: NSView {
         session?.move(to: localPoint(event))
         isDrawing = false
         clearClipLines()
+        positionLoupe(at: localPoint(event))
+        updateShortcuts()
 
         // Under 3 points of travel reads as a click rather than a drag.
         if let session, session.line(constrained: false).distance < 3 {
@@ -232,6 +270,8 @@ final class CanvasView: NSView {
             if !event.isARepeat, session?.isMoving == false {
                 session?.beginMoving(from: currentMouseLocation())
             }
+        case Key.h:
+            onToggleShortcuts?()
         case Key.m:
             pendingShape = pendingShape == .line ? .box : .line
         case Key.g:
