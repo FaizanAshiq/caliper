@@ -1,8 +1,8 @@
 class Caliper < Formula
   desc "Menu bar tool for measuring distances on screen"
   homepage "https://github.com/FaizanAshiq/caliper"
-  url "https://github.com/FaizanAshiq/caliper/archive/refs/tags/v0.1.0.tar.gz"
-  sha256 "9af65b016a610bee9d7179af6b5663aa3ee583973d2bfe7e53c7661b363cf2c1"
+  url "https://github.com/FaizanAshiq/caliper/archive/refs/tags/v0.1.1.tar.gz"
+  sha256 "06681cc3a48a23831e2372f134f87c9c441b7923a5f9b7b2bcc8e94fcd940dd7"
   license "MIT"
   depends_on macos: :sonoma
 
@@ -29,5 +29,12 @@ class Caliper < Formula
       and edge snapping need Screen Recording, which Caliper asks for only when
       you first use one of them.
     EOS
+  end
+
+  test do
+    app = prefix/"Caliper.app"
+    assert_predicate app/"Contents/MacOS/Caliper", :executable?
+    assert_equal "com.faizanashiq.caliper",
+                 shell_output("/usr/bin/plutil -extract CFBundleIdentifier raw '#{app}/Contents/Info.plist'").strip
   end
 end
