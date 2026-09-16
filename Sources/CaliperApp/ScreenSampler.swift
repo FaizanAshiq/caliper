@@ -56,22 +56,26 @@ final class ScreenSampler {
         frames.removeAll()
         guard Self.isAuthorised else { return }
 
+        // onScreenWindowsOnly is false here only so that this app is certain to appear
+        // in content.applications. With it true the list holds apps whose windows are
+        // already composited, and the overlay is often not composited yet at this
+        // point, so there was nothing named Caliper to leave out and the read kept
+        // itself: two runs in three the eyedropper reported every colour 3% dark.
+        // What is read is still only what is on screen.
         guard let content = try? await SCShareableContent.excludingDesktopWindows(
-            false, onScreenWindowsOnly: true) else { return }
+            false, onScreenWindowsOnly: false) else { return }
 
-        // Caliper's own overlay is already on screen by the time this runs, and it
-        // paints a 3% black wash over everything so that it catches clicks. Capturing
-        // that darkened every colour the eyedropper reported by exactly 3%, and it put
-        // our own guides and readout in front of the edge detector as if they were
-        // things worth measuring. None of our windows belong in a picture of what we
-        // are pointing at.
-        let ownWindows = content.applications.filter {
+        // The overlay paints a 3% black wash over everything so that it catches clicks,
+        // and it is up by the time this runs. Including it darkened every colour the
+        // eyedropper reported, and put our own guides and readout in front of the edge
+        // detector as if they were things worth measuring.
+        let ownApplications = content.applications.filter {
             $0.processID == ProcessInfo.processInfo.processIdentifier
         }
 
         for display in content.displays {
             let filter = SCContentFilter(display: display,
-                                         excludingApplications: ownWindows,
+                                         excludingApplications: ownApplications,
                                          exceptingWindows: [])
             let configuration = SCStreamConfiguration()
             // SCDisplay reports points. The read has to happen at backing resolution,
