@@ -3,7 +3,7 @@ import CaliperCore
 
 /// A short stack of standard controls. Anything not exposed here is still reachable by
 /// editing preferences.json, which is why this window stays small on purpose.
-final class PreferencesWindowController: NSWindowController {
+final class PreferencesWindowController: NSWindowController, NSWindowDelegate {
     private var preferences: Preferences
     private let onChange: (Preferences) -> Void
 
@@ -25,6 +25,7 @@ final class PreferencesWindowController: NSWindowController {
                               defer: false)
         window.title = "Caliper Settings"
         super.init(window: window)
+        window.delegate = self
 
         buildLayout()
         loadValues()
@@ -123,6 +124,13 @@ final class PreferencesWindowController: NSWindowController {
         }
         try? preferences.save(to: Preferences.defaultFileURL)
         onChange(preferences)
+    }
+
+    /// The controller outlives the window, so every opening shows the same recorder
+    /// view. One left recording would reopen still listening and rebind the hotkey to
+    /// whatever was typed next.
+    func windowWillClose(_ notification: Notification) {
+        hotKeyRecorder.stopRecording()
     }
 
     func show() {

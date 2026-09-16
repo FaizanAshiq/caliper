@@ -17,9 +17,10 @@ public enum Snapping {
         }
     }
 
-    /// How close an edge has to be before it clips, in points. Eight is what
-    /// Photoshop uses and it is close enough to feel deliberate rather than magnetic.
-    public static let tolerance: Double = 8
+    /// How close an edge has to be before it clips, in points. Twelve is wide enough
+    /// to catch an edge you are aiming at without having to land on it, and still
+    /// narrow enough that two edges a few points apart do not fight over the shape.
+    public static let tolerance: Double = 12
 
     /// The shift that brings one of `positions` onto the nearest candidate, or nil
     /// when nothing is close enough to be worth moving to. The smallest movement

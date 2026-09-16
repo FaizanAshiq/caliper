@@ -20,6 +20,7 @@ final class OverlayController {
     private var windows: [NSWindow] = []
     private var screenIDs: [CGDirectDisplayID] = []
     private var guideWindows: [NSWindow] = []
+    private var focusObserver: NSObjectProtocol?
     private var preferences: Preferences
     private let sampler = ScreenSampler()
 
@@ -80,7 +81,38 @@ final class OverlayController {
         }
 
         NSApp.activate(ignoringOtherApps: true)
+        watchForLostFocus()
         refreshFrames()
+    }
+
+    /// Armed but unfocused is the worst state the overlay can be in. It covers every
+    /// screen, so there is nothing behind it to click on, and without key status escape
+    /// and copy do nothing: the screen is held hostage by a window that is not
+    /// listening. So whatever takes the focus, take it straight back.
+    ///
+    /// Only the application losing it counts. Moving between our own windows on two
+    /// displays resigns key on one of them, and reacting to that would have the two
+    /// windows pulling focus off each other for as long as the overlay was up.
+    private func watchForLostFocus() {
+        focusObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didResignActiveNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, self.isArmed else { return }
+                NSApp.activate(ignoringOtherApps: true)
+                let mouse = NSEvent.mouseLocation
+                let window = self.windows.first { $0.frame.contains(mouse) } ?? self.windows.first
+                window?.makeKeyAndOrderFront(nil)
+            }
+        }
+    }
+
+    private func stopWatchingFocus() {
+        guard let focusObserver else { return }
+        NotificationCenter.default.removeObserver(focusObserver)
+        self.focusObserver = nil
     }
 
     /// One display's worth of keystroke, every display's worth of effect. Written to
@@ -105,6 +137,9 @@ final class OverlayController {
     }
 
     func disarm() {
+        // First, or ordering the windows out reads as the app losing focus and the
+        // watcher hauls it back to a window that is on its way off screen.
+        stopWatchingFocus()
         for window in windows {
             window.orderOut(nil)
         }
