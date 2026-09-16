@@ -33,6 +33,16 @@ final class HotKeyRecorderView: NSView {
         return true
     }
 
+    /// Stops recording without binding anything. Closing a window does not resign its
+    /// first responder, so a field left armed comes back armed: showing the prompt
+    /// instead of the binding, and rebinding on the next key pressed anywhere in the
+    /// window. Whoever owns the window has to say when it is over.
+    func stopRecording() {
+        guard isRecording else { return }
+        isRecording = false
+        window?.makeFirstResponder(nil)
+    }
+
     override func keyDown(with event: NSEvent) {
         guard isRecording else {
             super.keyDown(with: event)

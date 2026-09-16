@@ -64,3 +64,9 @@ func snapOffsetSurvivesTheMoveEnding() {
     #expect(box.origin == Point(x: -3, y: 2))
     #expect(box.size == Size(width: 100, height: 50))
 }
+
+@Test("the default tolerance catches an edge you are near without being on it")
+func defaultToleranceIsWideEnoughToAimWith() {
+    #expect(Snapping.adjustment(for: [110], candidates: [100]) != nil)
+    #expect(Snapping.adjustment(for: [113], candidates: [100]) == nil)
+}

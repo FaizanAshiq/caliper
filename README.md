@@ -93,16 +93,15 @@ Manager does not load the Swift Testing macro plugin, so plain `swift test` fail
 expand `@Test` at all. The script points the compiler at the plugin when it finds it
 and falls straight through to `swift test` when it does not.
 
-## Why install from source
+## Why it builds from source
 
-Caliper is not notarised, because notarisation needs a paid Apple Developer
-account. Since macOS Sequoia, Apple removed the Control-click shortcut for
-opening un-notarised apps, so a downloaded copy would make you visit System
-Settings, Privacy and Security, and click Open Anyway before it would run.
+The formula compiles Caliper on your Mac rather than fetching a prebuilt
+binary, so what runs is built from the source in this repository.
 
-Quarantine is only applied to downloaded files. Building on your own machine
-skips all of that, which is why the Homebrew formula compiles rather than
-pulling a binary.
+It also opens on the first try. Quarantine is applied to downloaded files only,
+and since macOS Sequoia there is no Control-click shortcut past it, so a
+downloaded build would send you to System Settings, Privacy and Security to
+click Open Anyway before it would run. A local build never picks the flag up.
 
 One consequence is worth knowing about. An ad hoc signature is a hash of the
 binary, so every upgrade looks like a new app to macOS and Screen Recording has

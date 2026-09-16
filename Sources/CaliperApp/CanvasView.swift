@@ -351,23 +351,27 @@ final class CanvasView: NSView {
 
         guard let current = session, current.isMoving, !isFreeMove else { return }
 
-        let candidates = clipCandidates()
-        guard !candidates.verticals.isEmpty || !candidates.horizontals.isEmpty else { return }
-
         let xs: [Double]
         let ys: [Double]
+        let probes: [Point]
 
         switch current.shape {
         case .box:
             let box = current.box(constrained: isConstrained, fromCentre: isFromCentre)
-            xs = [box.origin.x, box.origin.x + box.size.width]
-            ys = [box.origin.y, box.origin.y + box.size.height]
+            let right = box.origin.x + box.size.width
+            let bottom = box.origin.y + box.size.height
+            xs = [box.origin.x, right]
+            ys = [box.origin.y, bottom]
+            probes = [Point(x: box.origin.x, y: box.origin.y), Point(x: right, y: box.origin.y),
+                      Point(x: box.origin.x, y: bottom), Point(x: right, y: bottom)]
         case .line:
             let line = current.line(constrained: isConstrained)
             xs = [line.start.x, line.end.x]
             ys = [line.start.y, line.end.y]
+            probes = [line.start, line.end]
         }
 
+        let candidates = clipCandidates(probing: probes)
         let horizontalClip = Snapping.adjustment(for: xs, candidates: candidates.verticals)
         let verticalClip = Snapping.adjustment(for: ys, candidates: candidates.horizontals)
 
@@ -375,7 +379,15 @@ final class CanvasView: NSView {
         session?.setSnapOffset(dx: horizontalClip?.delta ?? 0, dy: verticalClip?.delta ?? 0)
     }
 
-    private func clipCandidates() -> (verticals: [Double], horizontals: [Double]) {
+    /// Everything the shape is allowed to clip onto: the screen edges, your guides, and
+    /// the elements the shape's own corners are sitting over.
+    ///
+    /// Probing the corners rather than the pointer is the whole difference between
+    /// catching on what you are dragging towards and catching on whatever the mouse
+    /// happened to be over. While a shape is being moved the pointer sits at one corner
+    /// of it, so the old reading offered edges from that corner alone and the other
+    /// three had nothing to land on.
+    private func clipCandidates(probing probes: [Point]) -> (verticals: [Double], horizontals: [Double]) {
         var verticals: [Double] = [0, Double(bounds.maxX)]
         var horizontals: [Double] = [0, Double(bounds.maxY)]
 
@@ -386,18 +398,16 @@ final class CanvasView: NSView {
             }
         }
 
-        // The element under the cursor, when the screen can be read at all. This is
-        // what makes the shape catch on a real button rather than only on guides.
-        if let frozenFrame {
-            let point = currentMouseLocation()
-            let origin = (x: Int(scale.backing(fromPoints: point.x)),
-                          y: Int(scale.backing(fromPoints: point.y)))
-            if let pixels = detector.bounds(around: origin, in: frozenFrame) {
-                verticals.append(scale.points(fromBacking: Double(pixels.x)))
-                verticals.append(scale.points(fromBacking: Double(pixels.x + pixels.width)))
-                horizontals.append(scale.points(fromBacking: Double(pixels.y)))
-                horizontals.append(scale.points(fromBacking: Double(pixels.y + pixels.height)))
-            }
+        guard let frozenFrame else { return (verticals, horizontals) }
+
+        for probe in probes {
+            let origin = (x: Int(scale.backing(fromPoints: probe.x)),
+                          y: Int(scale.backing(fromPoints: probe.y)))
+            guard let pixels = detector.bounds(around: origin, in: frozenFrame) else { continue }
+            verticals.append(scale.points(fromBacking: Double(pixels.x)))
+            verticals.append(scale.points(fromBacking: Double(pixels.x + pixels.width)))
+            horizontals.append(scale.points(fromBacking: Double(pixels.y)))
+            horizontals.append(scale.points(fromBacking: Double(pixels.y + pixels.height)))
         }
 
         return (verticals, horizontals)

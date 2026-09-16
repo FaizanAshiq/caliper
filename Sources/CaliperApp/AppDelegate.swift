@@ -17,6 +17,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// and "granted, but this copy of the app cannot use it yet".
     private var couldReadScreenAtLaunch = false
     private var hasOfferedScreenAccess = false
+    /// Set by the two places that have already dealt with coming back, or decided not
+    /// to, so the terminate hook below does not launch a second copy behind them.
+    private var suppressRelaunchOnQuit = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         couldReadScreenAtLaunch = ScreenSampler.isAuthorised
@@ -97,6 +100,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// menu bar only app back, which leaves the user staring at an empty menu bar
     /// after granting the permission. This starts a fresh copy first, then stands down.
     @objc private func restart() {
+        suppressRelaunchOnQuit = true
         let configuration = NSWorkspace.OpenConfiguration()
         configuration.createsNewApplicationInstance = true
         NSWorkspace.shared.openApplication(at: Bundle.main.bundleURL,
@@ -164,6 +168,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @objc private func quit() {
+        suppressRelaunchOnQuit = true
         NSApp.terminate(nil)
+    }
+
+    /// Something other than our own Quit item is ending this run, and the screen became
+    /// readable while it was going. That is System Settings' Quit and Reopen button,
+    /// and its reopen half frequently does not bring a menu bar only app back: the icon
+    /// vanishes and the permission that was just granted looks broken. The menu offers
+    /// a restart row for the same reason, but that only helps someone still running.
+    /// So bring a fresh copy up first, and stand down once it is there.
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard !suppressRelaunchOnQuit, ScreenSampler.isAuthorised, !couldReadScreenAtLaunch else {
+            return .terminateNow
+        }
+
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.createsNewApplicationInstance = true
+        NSWorkspace.shared.openApplication(at: Bundle.main.bundleURL,
+                                           configuration: configuration) { _, _ in
+            DispatchQueue.main.async { NSApp.reply(toApplicationShouldTerminate: true) }
+        }
+        // Quitting still has to happen if the launch never reports back, or the app
+        // hangs on the way out instead of reappearing on the way in.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5) {
+            NSApp.reply(toApplicationShouldTerminate: true)
+        }
+        return .terminateLater
     }
 }
