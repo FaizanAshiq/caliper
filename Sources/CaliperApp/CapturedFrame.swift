@@ -64,8 +64,10 @@ struct CapturedFrame: PixelSampling {
                        alpha: 1)
     }
 
+    /// Written with the hash, because that is the form every stylesheet and design
+    /// tool wants and this string is both shown and copied.
     func hexString(x: Int, y: Int) -> String {
-        guard let index = offset(x: x, y: y) else { return "000000" }
-        return String(format: "%02X%02X%02X", bytes[index], bytes[index + 1], bytes[index + 2])
+        guard let index = offset(x: x, y: y) else { return "#000000" }
+        return String(format: "#%02X%02X%02X", bytes[index], bytes[index + 1], bytes[index + 2])
     }
 }

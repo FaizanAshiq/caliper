@@ -59,8 +59,20 @@ final class ScreenSampler {
         guard let content = try? await SCShareableContent.excludingDesktopWindows(
             false, onScreenWindowsOnly: true) else { return }
 
+        // Caliper's own overlay is already on screen by the time this runs, and it
+        // paints a 3% black wash over everything so that it catches clicks. Capturing
+        // that darkened every colour the eyedropper reported by exactly 3%, and it put
+        // our own guides and readout in front of the edge detector as if they were
+        // things worth measuring. None of our windows belong in a picture of what we
+        // are pointing at.
+        let ownWindows = content.applications.filter {
+            $0.processID == ProcessInfo.processInfo.processIdentifier
+        }
+
         for display in content.displays {
-            let filter = SCContentFilter(display: display, excludingWindows: [])
+            let filter = SCContentFilter(display: display,
+                                         excludingApplications: ownWindows,
+                                         exceptingWindows: [])
             let configuration = SCStreamConfiguration()
             // SCDisplay reports points. The read has to happen at backing resolution,
             // because that is what preserves half point precision. The factor comes
@@ -71,6 +83,12 @@ final class ScreenSampler {
             configuration.height = display.height * factor
             configuration.captureResolution = .best
             configuration.showsCursor = false
+            // Capture in sRGB rather than the display's own space. Without this the
+            // frame arrives in P3 and CapturedFrame converts it back, and two 8 bit
+            // conversions cost a couple of levels per channel: a window painted
+            // #1A334D was read as #18324A. The eyedropper has to give back the value
+            // that was painted, not one that has been round tripped.
+            configuration.colorSpaceName = CGColorSpace.sRGB
 
             guard let image = try? await SCScreenshotManager.captureImage(
                     contentFilter: filter, configuration: configuration),

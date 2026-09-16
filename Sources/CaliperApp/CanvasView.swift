@@ -115,7 +115,7 @@ final class CanvasView: NSView {
     /// screen permission is granted. Everything that needs pixels stays hidden.
     func apply(frozenFrame: CapturedFrame?) {
         self.frozenFrame = frozenFrame
-        loupe.isHidden = frozenFrame == nil || isDrawing
+        loupe.isHidden = !canShowLoupe
 
         if frozenFrame != nil, let point = pendingSnap {
             pendingSnap = nil
@@ -140,8 +140,15 @@ final class CanvasView: NSView {
         positionLoupe(at: localPoint(event))
     }
 
+    /// The loupe is the colour tool and a shape is the measuring tool. Showing both
+    /// at once put the magnifier on top of the reading it was competing with, and it
+    /// also made Cmd+C ambiguous. Only one of them is ever on screen.
+    private var canShowLoupe: Bool {
+        frozenFrame != nil && !isDrawing && session == nil && snappedBox == nil
+    }
+
     private func positionLoupe(at point: Point) {
-        guard let frozenFrame else {
+        guard canShowLoupe, let frozenFrame else {
             loupe.isHidden = true
             return
         }
@@ -264,7 +271,11 @@ final class CanvasView: NSView {
     override func keyDown(with event: NSEvent) {
         switch event.keyCode {
         case Key.escape:
-            onDismiss?()
+            if session != nil || snappedBox != nil {
+                clearDrawing()
+            } else {
+                onDismiss?()
+            }
         case Key.space:
             // isARepeat guards against key repeat restarting the move on every tick.
             if !event.isARepeat, session?.isMoving == false {
@@ -300,6 +311,18 @@ final class CanvasView: NSView {
             }
             super.keyDown(with: event)
         }
+    }
+
+    /// Escape gets you back to an empty overlay before it gets you out of one, which
+    /// is also the only way back to the loupe once something has been measured.
+    private func clearDrawing() {
+        session = nil
+        snappedBox = nil
+        snappedGaps = [:]
+        clearClipLines()
+        refreshHUD()
+        positionLoupe(at: currentMouseLocation())
+        needsDisplay = true
     }
 
     override func keyUp(with event: NSEvent) {
@@ -389,25 +412,44 @@ final class CanvasView: NSView {
         GuideStore.shared.add(Guide(axis: axis, position: position, screenID: screenID))
     }
 
+    /// One copy key for whatever is on screen. A shape and the loupe are never both
+    /// showing, so there is never a question of which one this means.
     private func copyCurrentValue() {
         if let snappedBox {
-            let text = formatter.clipboard(box: snappedBox, format: preferences.copyFormat)
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(text, forType: .string)
+            copy(formatter.clipboard(box: snappedBox, format: preferences.copyFormat))
             return
         }
 
-        guard let session else { return }
-        let text: String
+        guard let session else {
+            copyColour()
+            return
+        }
+
         switch session.shape {
         case .line:
-            text = formatter.clipboard(line: session.line(constrained: isConstrained),
-                                       format: preferences.copyFormat)
+            copy(formatter.clipboard(line: session.line(constrained: isConstrained),
+                                     format: preferences.copyFormat))
         case .box:
-            text = formatter.clipboard(box: session.box(constrained: isConstrained,
-                                                        fromCentre: isFromCentre),
-                                       format: preferences.copyFormat)
+            copy(formatter.clipboard(box: session.box(constrained: isConstrained,
+                                                      fromCentre: isFromCentre),
+                                     format: preferences.copyFormat))
         }
+    }
+
+    /// The hex under the crosshair. The loupe has always shown it and nothing could
+    /// ever take it anywhere.
+    private func copyColour() {
+        guard let frozenFrame else {
+            // The screen has never been read, so there is no colour to hand over.
+            NSSound.beep()
+            return
+        }
+        let point = currentMouseLocation()
+        copy(frozenFrame.hexString(x: Int(scale.backing(fromPoints: point.x)),
+                                   y: Int(scale.backing(fromPoints: point.y))))
+    }
+
+    private func copy(_ text: String) {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(text, forType: .string)
     }
