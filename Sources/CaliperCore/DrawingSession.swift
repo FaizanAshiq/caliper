@@ -18,6 +18,13 @@ public struct DrawingSession: Equatable, Sendable {
     /// underneath were never touched.
     public private(set) var snapOffset: Point = Point(x: 0, y: 0)
 
+    /// Where the loose end is drawn relative to where it actually is, while the shape
+    /// is being drawn and that end clips onto a nearby edge. Kept apart from
+    /// snapOffset because a drag clips one end and a move clips the whole shape, and
+    /// using the move's offset for a drag would slide the anchor off the point the
+    /// user already placed.
+    public private(set) var cursorClip: Point = Point(x: 0, y: 0)
+
     /// Set while the space key is held. Holds the last cursor position seen, so each
     /// further move can be applied as a delta to both ends at once.
     private var moveReference: Point?
@@ -60,8 +67,27 @@ public struct DrawingSession: Equatable, Sendable {
         snapOffset = Point(x: dx, y: dy)
     }
 
+    public mutating func setCursorClip(dx: Double, dy: Double) {
+        cursorClip = Point(x: dx, y: dy)
+    }
+
+    /// Fold the clipping into the real cursor, so the finished shape stays where it
+    /// was last seen and an arrow nudge carries on from there. The drag's counterpart
+    /// to what endMoving does for a move.
+    public mutating func commitCursorClip() {
+        cursor = Point(x: cursor.x + cursorClip.x, y: cursor.y + cursorClip.y)
+        cursorClip = Point(x: 0, y: 0)
+    }
+
     private func clipped(_ point: Point) -> Point {
         Point(x: point.x + snapOffset.x, y: point.y + snapOffset.y)
+    }
+
+    /// The loose end carries both offsets: the move shifts the whole shape, the clip
+    /// shifts this end alone, and holding space mid drag can leave both in play.
+    private var clippedCursor: Point {
+        Point(x: cursor.x + snapOffset.x + cursorClip.x,
+              y: cursor.y + snapOffset.y + cursorClip.y)
     }
 
     public mutating func nudge(dx: Double, dy: Double) {
@@ -69,13 +95,13 @@ public struct DrawingSession: Equatable, Sendable {
     }
 
     public func line(constrained: Bool) -> LineMeasurement {
-        let raw = LineMeasurement(start: clipped(anchor), end: clipped(cursor))
+        let raw = LineMeasurement(start: clipped(anchor), end: clippedCursor)
         return constrained ? raw.constrainedToAxes() : raw
     }
 
     public func box(constrained: Bool, fromCentre: Bool) -> BoxRect {
         let start = clipped(anchor)
-        let end = clipped(cursor)
+        let end = clippedCursor
         let raw = BoxMeasurement.from(anchor: start, cursor: end, fromCentre: fromCentre)
         guard constrained else { return raw }
         return BoxMeasurement.squared(raw, anchor: start, fromCentre: fromCentre)

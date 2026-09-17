@@ -31,6 +31,12 @@ public struct UnitFormatter: Sendable {
         return "\(primary) · \(number(pixels)) px"
     }
 
+    /// Just the value, with no units, for a label drawn in a space too small to spell
+    /// them out. A gap label sits beside the gap it measures, which can be eight points.
+    public func compact(points value: Double) -> String {
+        number(value)
+    }
+
     public func display(box: BoxRect) -> String {
         "\(number(box.size.width)) × \(number(box.size.height)) pt"
     }
@@ -46,6 +52,12 @@ public struct UnitFormatter: Sendable {
         case .css:
             return "width: \(number(box.size.width))px; height: \(number(box.size.height))px;"
         }
+    }
+
+    /// Gap readings for the clipboard, for example "left 24  right 40". Labelled
+    /// because a bare pair of numbers does not say which side is which.
+    public func clipboard(gaps: [(label: String, points: Double)]) -> String {
+        gaps.map { "\($0.label) \(number($0.points))" }.joined(separator: "  ")
     }
 
     public func clipboard(line: LineMeasurement, format: CopyFormat) -> String {

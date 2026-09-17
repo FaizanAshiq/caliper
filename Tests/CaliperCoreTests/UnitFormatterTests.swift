@@ -41,3 +41,18 @@ func snapsBeforeDisplay() {
     let formatter = UnitFormatter(scale: .retina, showBackingPixels: false)
     #expect(formatter.display(points: 16.26) == "16.5 pt")
 }
+
+@Test("gaps copy with the side they were measured on")
+func gapsCopyLabelled() {
+    let formatter = UnitFormatter(scale: Scale(factor: 2), showBackingPixels: true)
+    #expect(formatter.clipboard(gaps: [("left", 24), ("right", 40.4)]) == "left 24  right 40.5")
+}
+
+@Test("a compact value drops the units a gap label has no room for")
+func compactDropsUnits() {
+    let formatter = UnitFormatter(scale: Scale(factor: 2), showBackingPixels: true)
+    #expect(formatter.compact(points: 16) == "16")
+    #expect(formatter.compact(points: 16.4) == "16.5")
+    // display keeps them, so the readout and the gap labels stay different on purpose.
+    #expect(formatter.display(points: 16) == "16 pt · 32 px")
+}
