@@ -358,33 +358,48 @@ final class CanvasView: NSView {
             gaps: gaps)
     }
 
+    /// One drawn span: the axis it lies along, the run it covers, and the word it
+    /// copies as. Held together so the drawing and the clipboard cannot disagree about
+    /// which gaps are worth showing.
+    private struct Span {
+        let horizontal: Bool
+        let gap: Gap
+        /// left, right, up or down for a thing, width or height for a space.
+        let label: String
+    }
+
     /// What X and Y actually draw, as a span along one axis each.
     ///
     /// For a thing, the gaps to its neighbours. For a space, the space's own width and
     /// height, because when you point at a gutter its width is the measurement you came
     /// for and the width of the card beyond it is not.
-    private func spans(of reading: ElementReading) -> [(horizontal: Bool, gap: Gap)] {
-        var result: [(horizontal: Bool, gap: Gap)] = []
+    private func spans(of reading: ElementReading) -> [Span] {
+        var result: [Span] = []
 
         switch reading.kind {
         case .space:
             if showsHorizontalGaps {
-                result.append((true, Gap(near: reading.box.origin.x,
-                                         far: reading.box.origin.x + reading.box.size.width)))
+                result.append(Span(horizontal: true,
+                                   gap: Gap(near: reading.box.origin.x,
+                                            far: reading.box.origin.x + reading.box.size.width),
+                                   label: "width"))
             }
             if showsVerticalGaps {
-                result.append((false, Gap(near: reading.box.origin.y,
-                                          far: reading.box.origin.y + reading.box.size.height)))
+                result.append(Span(horizontal: false,
+                                   gap: Gap(near: reading.box.origin.y,
+                                            far: reading.box.origin.y + reading.box.size.height),
+                                   label: "height"))
             }
         case .thing:
             for direction in gapDirections {
                 guard let gap = reading.gaps[direction] else { continue }
-                result.append((direction == .left || direction == .right, gap))
+                result.append(Span(horizontal: direction == .left || direction == .right,
+                                   gap: gap,
+                                   label: Self.name(of: direction)))
             }
         }
 
-        // Under a point of span is a rounding artefact, not a measurement.
-        return result.filter { $0.gap.length >= 1 }
+        return result.filter { $0.gap.length > Self.hairline }
     }
 
     /// Shift and option are read live, so the shape reshapes the moment they are held
@@ -664,22 +679,9 @@ final class CanvasView: NSView {
     private func gapClipboard(of reading: ElementReading) -> String? {
         let drawn = spans(of: reading)
         guard !drawn.isEmpty else { return nil }
-
-        switch reading.kind {
-        case .space:
-            // A space reports itself, so the words are its dimensions rather than the
-            // side a neighbour sits on.
-            return formatter.clipboard(gaps: drawn.map {
-                (label: $0.horizontal ? "width" : "height", points: $0.gap.length)
-            })
-        case .thing:
-            let entries = gapDirections.compactMap { direction -> (label: String, points: Double)? in
-                guard let gap = reading.gaps[direction], gap.length >= 1 else { return nil }
-                return (label: Self.name(of: direction), points: gap.length)
-            }
-            guard !entries.isEmpty else { return nil }
-            return formatter.clipboard(gaps: entries)
-        }
+        // Exactly what is on screen, in the same order, because copying something the
+        // overlay is not showing is worse than copying nothing.
+        return formatter.clipboard(gaps: drawn.map { (label: $0.label, points: $0.gap.length) })
     }
 
     private static func name(of direction: Direction) -> String {
@@ -755,6 +757,15 @@ final class CanvasView: NSView {
         }
     }
 
+    /// A gap no bigger than this is a border, not spacing.
+    ///
+    /// Readings stop at half a point, and half a point and one point are the two widths
+    /// a hairline rule comes in. Walking up out of a table row lands on the one point
+    /// line between it and the row above, and labelling that is a truthful answer to a
+    /// question nobody asked: a tick and a pill on screen to describe a border. The
+    /// tightest spacing anyone sets on purpose is wider than this.
+    private static let hairline: Double = 1
+
     /// How far a tick reaches either side of the gap line, and how far the label sits
     /// off it. A gap can be eight points wide, so the label goes beside the line rather
     /// than in it, where a pill would cover the very thing it is measuring.
@@ -767,7 +778,8 @@ final class CanvasView: NSView {
     private func drawGaps(of reading: ElementReading) {
         let color = NSColor(hex: preferences.lineColorHex) ?? .systemRed
 
-        for (horizontal, gap) in spans(of: reading) {
+        for span in spans(of: reading) {
+            let (horizontal, gap) = (span.horizontal, span.gap)
             let start = horizontal ? NSPoint(x: gap.near, y: reading.probe.y)
                                    : NSPoint(x: reading.probe.x, y: gap.near)
             let end = horizontal ? NSPoint(x: gap.far, y: reading.probe.y)
