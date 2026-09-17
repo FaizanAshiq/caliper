@@ -835,13 +835,26 @@ final class CanvasView: NSView {
     /// off it. A gap can be eight points wide, so the label goes beside the line rather
     /// than in it, where a pill would cover the very thing it is measuring.
     private static let tickReach: CGFloat = 5
-    private static let labelReach: CGFloat = 17
+    /// One step away from the line, and the distance a label is nudged when something
+    /// is already where it wanted to sit. A little over a pill's own height, so two
+    /// stacked pills clear each other in one move.
+    private static let labelStep: CGFloat = 26
+
+    /// Kept clear around the cursor. The crosshair is drawn by the system over
+    /// everything the canvas draws, so a pill under it is simply gone.
+    private static let cursorKeepOut: CGFloat = 34
 
     /// Each gap is drawn along the ray it was measured on, with a tick at both ends and
     /// the number beside it. Running the line through the middle of the element instead
     /// would put it somewhere the measurement never went.
     private func drawGaps(of reading: ElementReading) {
         let color = NSColor(hex: preferences.lineColorHex) ?? .systemRed
+
+        // The cursor goes in first, so every label treats it as occupied.
+        var placed = [NSRect(x: reading.probe.x - Self.cursorKeepOut / 2,
+                             y: reading.probe.y - Self.cursorKeepOut / 2,
+                             width: Self.cursorKeepOut,
+                             height: Self.cursorKeepOut)]
 
         for span in spans(of: reading) {
             let (horizontal, gap) = (span.horizontal, span.gap)
@@ -868,34 +881,72 @@ final class CanvasView: NSView {
             color.setStroke()
             path.stroke()
 
+            // The axis goes in the label, so a number always says which way it runs.
             let middle = NSPoint(x: (start.x + end.x) / 2, y: (start.y + end.y) / 2)
-            let label = horizontal ? NSPoint(x: middle.x, y: middle.y - Self.labelReach)
-                                   : NSPoint(x: middle.x + Self.labelReach, y: middle.y)
-            // The axis goes in the label. Four gaps drawn in one colour with bare
-            // numbers were four of the same thing, and with only one axis on there was
-            // nothing to say which one you were looking at.
-            drawPill("\(horizontal ? "↔" : "↕") \(formatter.compact(points: gap.length))",
-                     centredAt: label)
+            place("\(horizontal ? "↔" : "↕") \(formatter.compact(points: gap.length))",
+                  from: middle, horizontal: horizontal, avoiding: &placed)
         }
     }
 
     /// A gap label, in the same dark pill the readout uses. Drawn here rather than
     /// through HUDView because four can be on screen at once and each one belongs to a
     /// gap of its own rather than to the cursor.
+    private static let pillFont = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .semibold)
+    private static let pillPadding: CGFloat = 5
+
+    private func pillRect(_ text: String, centredAt centre: NSPoint) -> NSRect {
+        let size = NSAttributedString(string: text, attributes: [.font: Self.pillFont]).size()
+        return NSRect(x: centre.x - size.width / 2 - Self.pillPadding,
+                      y: centre.y - size.height / 2 - Self.pillPadding,
+                      width: size.width + Self.pillPadding * 2,
+                      height: size.height + Self.pillPadding * 2)
+    }
+
     private func drawPill(_ text: String, centredAt centre: NSPoint) {
         let string = NSAttributedString(string: text, attributes: [
-            .font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .semibold),
+            .font: Self.pillFont,
             .foregroundColor: NSColor.white,
         ])
-        let size = string.size()
-        let padding: CGFloat = 5
-        let box = NSRect(x: centre.x - size.width / 2 - padding,
-                         y: centre.y - size.height / 2 - padding,
-                         width: size.width + padding * 2,
-                         height: size.height + padding * 2)
+        let box = pillRect(text, centredAt: centre)
         NSColor.black.withAlphaComponent(0.82).setFill()
         NSBezierPath(roundedRect: box, xRadius: 5, yRadius: 5).fill()
-        string.draw(at: NSPoint(x: box.minX + padding, y: box.minY + padding))
+        string.draw(at: NSPoint(x: box.minX + Self.pillPadding,
+                                y: box.minY + Self.pillPadding))
+    }
+
+    /// Draws a label clear of the cursor and of the labels already down.
+    ///
+    /// Both spans run through the cursor, so their midpoints land next to it and next
+    /// to each other. On a wide thin band the two pills arrived in the same spot, one
+    /// on top of the other and both under the crosshair. So the label starts a step off
+    /// the line and keeps stepping until it is clear, perpendicular to its own span,
+    /// then the other way if it would leave the screen.
+    private func place(_ text: String,
+                       from middle: NSPoint,
+                       horizontal: Bool,
+                       avoiding placed: inout [NSRect]) {
+        let step = Self.labelStep
+        let directions: [NSPoint] = horizontal
+            ? [NSPoint(x: 0, y: -step), NSPoint(x: 0, y: step)]
+            : [NSPoint(x: step, y: 0), NSPoint(x: -step, y: 0)]
+
+        // The first direction's first step, used when nothing anywhere is clear.
+        var chosen = NSPoint(x: middle.x + directions[0].x, y: middle.y + directions[0].y)
+
+        search: for direction in directions {
+            for attempt in 1 ... 5 {
+                let candidate = NSPoint(x: middle.x + direction.x * CGFloat(attempt),
+                                        y: middle.y + direction.y * CGFloat(attempt))
+                let rect = pillRect(text, centredAt: candidate)
+                guard bounds.contains(rect) else { break }
+                guard !placed.contains(where: { $0.intersects(rect) }) else { continue }
+                chosen = candidate
+                break search
+            }
+        }
+
+        placed.append(pillRect(text, centredAt: chosen))
+        drawPill(text, centredAt: chosen)
     }
 
     override func draw(_ dirtyRect: NSRect) {
