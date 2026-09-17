@@ -29,7 +29,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         overlay?.warmUp()
 
         let monitor = HotKeyMonitor { [weak self] in
-            self?.toggleOverlay()
+            self?.requestOverlay()
         }
         monitor.register(preferences.hotkey)
         hotKeyMonitor = monitor
@@ -60,6 +60,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// matches the preferences file.
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
+
+        // Preflight says yes and every capture still comes back empty. Nothing the app
+        // can do about it, so offer the one place the user can.
+        if overlay?.isScreenBlocked == true {
+            menu.addItem(NSMenuItem(title: "Fix Screen Recording",
+                                    action: #selector(openScreenRecordingSettings),
+                                    keyEquivalent: ""))
+            menu.addItem(note("macOS still lists Caliper but is handing over nothing"))
+            menu.addItem(NSMenuItem.separator())
+        }
 
         if ScreenSampler.isAuthorised, !couldReadScreenAtLaunch {
             menu.addItem(NSMenuItem(title: "Restart Caliper to Finish Enabling",
@@ -128,15 +138,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return menu
     }
 
-    /// Asked for at the point of use rather than sitting in the menu as a chore. Once
-    /// per launch, so declining it is not punished with the same box every time.
+    /// The permission is already granted as far as TCC is concerned, so requesting it
+    /// again returns instantly and changes nothing. Toggling the row by hand is the only
+    /// thing that clears it.
+    @objc private func openScreenRecordingSettings() {
+        guard let url = URL(string:
+            "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") else { return }
+        NSWorkspace.shared.open(url)
+    }
+
     @objc private func toggleOverlayFromMenu() {
+        requestOverlay()
+    }
+
+    /// The one way in, whichever way you came. Asked for at the point of use rather
+    /// than sitting in the menu as a chore, and once per launch, so declining it is not
+    /// punished with the same box every time.
+    ///
+    /// The hotkey used to call toggleOverlay directly and skip all of this, which meant
+    /// the way almost everyone opens the overlay was the one way that never mentioned
+    /// the permission. It came up looking fine with the loupe, the gap readings and
+    /// element snapping all silently dead, and nothing on screen saying why.
+    private func requestOverlay() {
         if !ScreenSampler.isAuthorised, !hasOfferedScreenAccess {
             hasOfferedScreenAccess = true
 
             let alert = NSAlert()
             alert.messageText = "Caliper measures without any permission"
-            alert.informativeText = "The loupe, the eyedropper, snapping to an element and clipping while you move all read what is on screen, so they need Screen Recording. The ruler, the marquee and guides do not."
+            alert.informativeText = "The loupe, the eyedropper, the X and Y gap readings and snapping onto an element all read what is on screen, so they need Screen Recording. The ruler, the marquee, guides and snapping to a guide or a screen edge do not."
             alert.addButton(withTitle: "Enable")
             alert.addButton(withTitle: "Not Now")
             NSApp.activate(ignoringOtherApps: true)

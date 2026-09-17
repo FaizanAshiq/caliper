@@ -21,6 +21,17 @@ final class CanvasView: NSView {
     private let shortcuts = ShortcutsView()
     private var frozenFrame: CapturedFrame?
 
+    /// Why there is no frozen frame, so the overlay can say what to do about it instead
+    /// of quietly dropping half its features. Never asked and asked but refused need
+    /// different answers, and the refused case is the one that looks like a bug.
+    enum ScreenAccess {
+        case granted
+        case notAsked
+        case blocked
+    }
+
+    var screenAccess: ScreenAccess = .granted
+
     var onRequestResample: (() -> Void)?
     /// Handed upwards rather than done here, because the strip has to disappear on
     /// every display at once and the choice has to outlive the overlay.
@@ -40,6 +51,9 @@ final class CanvasView: NSView {
     /// loose fields because the same reading serves a live hover and a pinned click,
     /// and because a gap can only be drawn if its position travels with it.
     private struct ElementReading {
+        /// Decides what the gap numbers mean, so it travels with the reading rather
+        /// than being worked out again at every place that draws or copies one.
+        let kind: RegionKind
         let box: BoxRect
         /// The point the frame was read at. Every gap was measured along a ray from
         /// here, so each has to be drawn along that same ray or the line will disagree
@@ -331,13 +345,46 @@ final class CanvasView: NSView {
                                   far: scale.points(fromBacking: Double(span.far)))
         }
 
-        return ElementReading(
-            box: BoxRect(origin: Point(x: scale.points(fromBacking: Double(pixels.x)),
+        let box = BoxRect(origin: Point(x: scale.points(fromBacking: Double(pixels.x)),
                                        y: scale.points(fromBacking: Double(pixels.y))),
                          size: Size(width: scale.points(fromBacking: Double(pixels.width)),
-                                    height: scale.points(fromBacking: Double(pixels.height)))),
+                       height: scale.points(fromBacking: Double(pixels.height))))
+
+        return ElementReading(
+            kind: RegionKind.of(box, onScreen: Size(width: Double(bounds.width),
+                                                    height: Double(bounds.height))),
+            box: box,
             probe: point,
             gaps: gaps)
+    }
+
+    /// What X and Y actually draw, as a span along one axis each.
+    ///
+    /// For a thing, the gaps to its neighbours. For a space, the space's own width and
+    /// height, because when you point at a gutter its width is the measurement you came
+    /// for and the width of the card beyond it is not.
+    private func spans(of reading: ElementReading) -> [(horizontal: Bool, gap: Gap)] {
+        var result: [(horizontal: Bool, gap: Gap)] = []
+
+        switch reading.kind {
+        case .space:
+            if showsHorizontalGaps {
+                result.append((true, Gap(near: reading.box.origin.x,
+                                         far: reading.box.origin.x + reading.box.size.width)))
+            }
+            if showsVerticalGaps {
+                result.append((false, Gap(near: reading.box.origin.y,
+                                          far: reading.box.origin.y + reading.box.size.height)))
+            }
+        case .thing:
+            for direction in gapDirections {
+                guard let gap = reading.gaps[direction] else { continue }
+                result.append((direction == .left || direction == .right, gap))
+            }
+        }
+
+        // Under a point of span is a rounding artefact, not a measurement.
+        return result.filter { $0.gap.length >= 1 }
     }
 
     /// Shift and option are read live, so the shape reshapes the moment they are held
@@ -615,12 +662,24 @@ final class CanvasView: NSView {
     /// side is which. Nil when nothing was found either way, so the element's own size
     /// gets copied rather than an empty string.
     private func gapClipboard(of reading: ElementReading) -> String? {
-        let entries = gapDirections.compactMap { direction -> (label: String, points: Double)? in
-            guard let gap = reading.gaps[direction], gap.length >= 1 else { return nil }
-            return (label: Self.name(of: direction), points: gap.length)
+        let drawn = spans(of: reading)
+        guard !drawn.isEmpty else { return nil }
+
+        switch reading.kind {
+        case .space:
+            // A space reports itself, so the words are its dimensions rather than the
+            // side a neighbour sits on.
+            return formatter.clipboard(gaps: drawn.map {
+                (label: $0.horizontal ? "width" : "height", points: $0.gap.length)
+            })
+        case .thing:
+            let entries = gapDirections.compactMap { direction -> (label: String, points: Double)? in
+                guard let gap = reading.gaps[direction], gap.length >= 1 else { return nil }
+                return (label: Self.name(of: direction), points: gap.length)
+            }
+            guard !entries.isEmpty else { return nil }
+            return formatter.clipboard(gaps: entries)
         }
-        guard !entries.isEmpty else { return nil }
-        return formatter.clipboard(gaps: entries)
     }
 
     private static func name(of direction: Direction) -> String {
@@ -681,6 +740,21 @@ final class CanvasView: NSView {
         }
     }
 
+    /// Says why the loupe, the gap readings and element snapping are missing. Only ever
+    /// on screen when there is no frame, and silent while a fresh read is still in
+    /// flight, so arming does not flash a warning that is about to be untrue.
+    private var screenNote: String? {
+        guard frozenFrame == nil else { return nil }
+        switch screenAccess {
+        case .granted:
+            return nil
+        case .notAsked:
+            return "Screen Recording is off. The loupe, the X and Y gaps and element snapping need it."
+        case .blocked:
+            return "macOS is refusing to hand over the screen. Switch Caliper off and on again in Screen Recording settings."
+        }
+    }
+
     /// How far a tick reaches either side of the gap line, and how far the label sits
     /// off it. A gap can be eight points wide, so the label goes beside the line rather
     /// than in it, where a pill would cover the very thing it is measuring.
@@ -693,10 +767,7 @@ final class CanvasView: NSView {
     private func drawGaps(of reading: ElementReading) {
         let color = NSColor(hex: preferences.lineColorHex) ?? .systemRed
 
-        for direction in gapDirections {
-            guard let gap = reading.gaps[direction], gap.length >= 1 else { continue }
-            let horizontal = direction == .left || direction == .right
-
+        for (horizontal, gap) in spans(of: reading) {
             let start = horizontal ? NSPoint(x: gap.near, y: reading.probe.y)
                                    : NSPoint(x: reading.probe.x, y: gap.near)
             let end = horizontal ? NSPoint(x: gap.far, y: reading.probe.y)
@@ -723,7 +794,11 @@ final class CanvasView: NSView {
             let middle = NSPoint(x: (start.x + end.x) / 2, y: (start.y + end.y) / 2)
             let label = horizontal ? NSPoint(x: middle.x, y: middle.y - Self.labelReach)
                                    : NSPoint(x: middle.x + Self.labelReach, y: middle.y)
-            drawPill(formatter.compact(points: gap.length), centredAt: label)
+            // The axis goes in the label. Four gaps drawn in one colour with bare
+            // numbers were four of the same thing, and with only one axis on there was
+            // nothing to say which one you were looking at.
+            drawPill("\(horizontal ? "↔" : "↕") \(formatter.compact(points: gap.length))",
+                     centredAt: label)
         }
     }
 
@@ -785,17 +860,34 @@ final class CanvasView: NSView {
         }
 
         if let reading {
-            let rect = NSRect(x: reading.box.origin.x, y: reading.box.origin.y,
-                              width: reading.box.size.width, height: reading.box.size.height)
             let snapColor = NSColor(hex: preferences.guideColorHex) ?? .systemBlue
-            snapColor.setStroke()
-            let outline = NSBezierPath(rect: rect)
-            outline.lineWidth = 1
-            outline.stroke()
-            snapColor.withAlphaComponent(0.10).setFill()
-            rect.fill()
 
-            if showsGaps { drawGaps(of: reading) }
+            // Outlining a space is what made a cursor resting in a gutter paint a tall
+            // blue column over half the screen. The span line says everything the
+            // outline would, and says it about the thing being measured.
+            if !(showsGaps && reading.kind == .space) {
+                let rect = NSRect(x: reading.box.origin.x, y: reading.box.origin.y,
+                                  width: reading.box.size.width, height: reading.box.size.height)
+                snapColor.setStroke()
+                let outline = NSBezierPath(rect: rect)
+                outline.lineWidth = 1
+                outline.stroke()
+                snapColor.withAlphaComponent(0.10).setFill()
+                rect.fill()
+            }
+
+            if showsGaps {
+                drawGaps(of: reading)
+                // Every gap was measured along a ray from this point, so showing it is
+                // the difference between trusting the numbers and guessing at them.
+                snapColor.setFill()
+                NSBezierPath(ovalIn: NSRect(x: reading.probe.x - 2.5, y: reading.probe.y - 2.5,
+                                            width: 5, height: 5)).fill()
+            }
+        }
+
+        if let screenNote {
+            drawPill(screenNote, centredAt: NSPoint(x: bounds.midX, y: 44))
         }
 
         guard let session else { return }

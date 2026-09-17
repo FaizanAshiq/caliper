@@ -31,6 +31,10 @@ final class OverlayController {
 
     var isArmed: Bool { !windows.isEmpty }
 
+    /// macOS says the permission is there and hands over nothing anyway. Surfaced so
+    /// the menu can offer the one thing that fixes it.
+    var isScreenBlocked: Bool { sampler.isBlockedDespiteAuthorisation }
+
     /// Called once at launch. See ScreenSampler.warmUp for why.
     func warmUp() {
         Task { @MainActor in await sampler.warmUp() }
@@ -130,8 +134,12 @@ final class OverlayController {
     private func refreshFrames() {
         Task { @MainActor in
             await sampler.refresh()
+            let access: CanvasView.ScreenAccess = sampler.isBlockedDespiteAuthorisation ? .blocked
+                : ScreenSampler.isAuthorised ? .granted : .notAsked
             for (window, screenID) in zip(windows, screenIDs) {
-                (window.contentView as? CanvasView)?.apply(frozenFrame: sampler.frame(for: screenID))
+                let canvas = window.contentView as? CanvasView
+                canvas?.screenAccess = access
+                canvas?.apply(frozenFrame: sampler.frame(for: screenID))
             }
         }
     }
