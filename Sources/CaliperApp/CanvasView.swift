@@ -410,7 +410,16 @@ final class CanvasView: NSView {
             }
         }
 
-        return result.filter { $0.gap.length > Self.hairline }
+        // A space reports its own span, which is a measurement of something the
+        // detector definitely found. Only the walk out to a neighbour can have gone
+        // through an edge that was never seen, so only those get judged.
+        guard reading.kind == .thing else { return result }
+
+        return result.filter {
+            GapCredibility.isSpacing($0.gap.length,
+                                     screenSpan: $0.horizontal ? Double(bounds.width)
+                                                               : Double(bounds.height))
+        }
     }
 
     /// Shift and option are read live, so the shape reshapes the moment they are held
@@ -780,15 +789,6 @@ final class CanvasView: NSView {
             return "macOS is refusing to hand over the screen. Switch Caliper off and on again in Screen Recording settings."
         }
     }
-
-    /// A gap no bigger than this is a border, not spacing.
-    ///
-    /// Readings stop at half a point, and half a point and one point are the two widths
-    /// a hairline rule comes in. Walking up out of a table row lands on the one point
-    /// line between it and the row above, and labelling that is a truthful answer to a
-    /// question nobody asked: a tick and a pill on screen to describe a border. The
-    /// tightest spacing anyone sets on purpose is wider than this.
-    private static let hairline: Double = 1
 
     /// How far a tick reaches either side of the gap line, and how far the label sits
     /// off it. A gap can be eight points wide, so the label goes beside the line rather
