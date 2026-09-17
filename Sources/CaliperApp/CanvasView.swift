@@ -76,6 +76,13 @@ final class CanvasView: NSView {
     private var showsHorizontalGaps = false
     private var showsVerticalGaps = false
     private var showsGaps: Bool { showsHorizontalGaps || showsVerticalGaps }
+
+    /// Whether the element under the cursor is outlined and sized as you move.
+    ///
+    /// Held apart from the gaps and never on at the same time. An outline, a width by
+    /// height readout and four gap labels all landed on one card at once, and the
+    /// answer you were after was buried in the other three. One question per mode.
+    private var showsElement = false
     private var gapDirections: [Direction] {
         var directions: [Direction] = []
         if showsHorizontalGaps { directions += [.left, .right] }
@@ -112,6 +119,7 @@ final class CanvasView: NSView {
         static let r: UInt16 = 15
         static let x: UInt16 = 7
         static let y: UInt16 = 16
+        static let e: UInt16 = 14
     }
 
     /// What the next drag draws. Switching it leaves the current shape alone.
@@ -211,8 +219,11 @@ final class CanvasView: NSView {
     /// With X or Y on, the element under the cursor is read on every move so the gaps
     /// follow the pointer instead of waiting for a click. A pinned reading outranks the
     /// hover: having clicked something, you want it to stay still while you read it.
+    /// Whether a mode is on that reads the frame as the cursor moves.
+    private var readsOnHover: Bool { showsGaps || showsElement }
+
     private func updateHoverReading(at point: Point) {
-        guard showsGaps, !isReadingPinned, !isDrawing else { return }
+        guard readsOnHover, !isReadingPinned, !isDrawing else { return }
         reading = read(at: point)
         refreshHUD()
         needsDisplay = true
@@ -223,7 +234,7 @@ final class CanvasView: NSView {
     /// also made Cmd+C ambiguous. Only one of them is ever on screen. X and Y take the
     /// hover for the gaps, which is the same argument a third time.
     private var canShowLoupe: Bool {
-        frozenFrame != nil && !isDrawing && session == nil && !isReadingPinned && !showsGaps
+        frozenFrame != nil && !isDrawing && session == nil && !isReadingPinned && !readsOnHover
     }
 
     private func positionLoupe(at point: Point) {
@@ -434,10 +445,19 @@ final class CanvasView: NSView {
             needsDisplay = true
         case Key.x:
             showsHorizontalGaps.toggle()
-            gapsChanged()
+            if showsHorizontalGaps { showsElement = false }
+            modeChanged()
         case Key.y:
             showsVerticalGaps.toggle()
-            gapsChanged()
+            if showsVerticalGaps { showsElement = false }
+            modeChanged()
+        case Key.e:
+            showsElement.toggle()
+            if showsElement {
+                showsHorizontalGaps = false
+                showsVerticalGaps = false
+            }
+            modeChanged()
         case Key.g:
             if event.modifierFlags.contains(.shift) {
                 GuideStore.shared.clear()
@@ -466,17 +486,17 @@ final class CanvasView: NSView {
         }
     }
 
-    /// Turning the gaps on takes the hover away from the loupe and gives it to the
-    /// element under the cursor. Turning the last one off hands it straight back, so
-    /// neither tool is left waiting for a mouse move to notice the mode changed.
-    private func gapsChanged() {
+    /// Switching mode takes the hover away from whatever had it and gives it to the new
+    /// one, right away, so nothing is left waiting for a mouse move to notice.
+    private func modeChanged() {
         let point = currentMouseLocation()
-        if !showsGaps, !isReadingPinned { reading = nil }
+        if !readsOnHover, !isReadingPinned { reading = nil }
         // X and Y are modes with nothing else on screen to say they are on, so the
         // strip lights their own entries up.
         var lit: Set<String> = []
         if showsHorizontalGaps { lit.insert("X") }
         if showsVerticalGaps { lit.insert("Y") }
+        if showsElement { lit.insert("E") }
         shortcuts.activeKeys = lit
         updateHoverReading(at: point)
         positionLoupe(at: point)
@@ -715,9 +735,13 @@ final class CanvasView: NSView {
     }
 
     private func refreshHUD() {
-        // The gaps carry their own labels, drawn on the gaps themselves, so the readout
-        // stays the element's own size rather than repeating four numbers already on
-        // screen a few points away.
+        // Each gap carries its own label, so in gap mode the readout would only be a
+        // fifth number chasing the cursor across the other four.
+        if showsGaps {
+            hud.text = ""
+            return
+        }
+
         if let reading {
             hud.text = formatter.display(box: reading.box)
             hud.anchor = NSPoint(x: reading.box.origin.x + reading.box.size.width,
@@ -874,10 +898,10 @@ final class CanvasView: NSView {
         if let reading {
             let snapColor = NSColor(hex: preferences.guideColorHex) ?? .systemBlue
 
-            // Outlining a space is what made a cursor resting in a gutter paint a tall
-            // blue column over half the screen. The span line says everything the
-            // outline would, and says it about the thing being measured.
-            if !(showsGaps && reading.kind == .space) {
+            // In gap mode the gaps are the answer, so the outline goes. It competed
+            // with four labels for attention and a tall blue column over a gutter was
+            // the worst of it.
+            if !showsGaps {
                 let rect = NSRect(x: reading.box.origin.x, y: reading.box.origin.y,
                                   width: reading.box.size.width, height: reading.box.size.height)
                 snapColor.setStroke()
