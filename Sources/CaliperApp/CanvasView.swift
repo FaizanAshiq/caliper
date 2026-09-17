@@ -51,19 +51,14 @@ final class CanvasView: NSView {
     /// loose fields because the same reading serves a live hover and a pinned click,
     /// and because a gap can only be drawn if its position travels with it.
     private struct ElementReading {
-        /// Decides what the gap numbers mean, so it travels with the reading rather
-        /// than being worked out again at every place that draws or copies one.
-        let kind: RegionKind
         let box: BoxRect
-        /// The point the frame was read at. Every gap was measured along a ray from
-        /// here, so each has to be drawn along that same ray or the line will disagree
-        /// with the number beside it.
-        /// The same bounds in backing pixels. Kept because the padding walk has to
-        /// start exactly on an edge pixel, and the trip out to points and back loses
-        /// the half pixel and lands the ray a row outside the element.
+        /// The bounds in backing pixels. Kept because the inward walk has to start
+        /// exactly on an edge pixel, and the trip out to points and back loses the
+        /// half pixel and lands the ray a row outside the region.
         let pixels: PixelRect
+        /// Where the frame was read, so the outline can be drawn and a pinned reading
+        /// knows what it belongs to.
         let probe: Point
-        let gaps: [Direction: Gap]
     }
 
     private var reading: ElementReading?
@@ -88,12 +83,6 @@ final class CanvasView: NSView {
     /// answer you were after was buried in the other three. One question per mode.
     private var showsElement = false
 
-    /// Whether the space between an element's edges and the first thing inside it is
-    /// shown. Padding, in other words, and the one measurement the gaps could never
-    /// give: X and Y only ever walk outward, to the siblings. Pointing at the dark band
-    /// round a card's artwork and being told how far the next card is misses the
-    /// question by a whole level of the layout.
-    private var showsPadding = false
     private var gapDirections: [Direction] {
         var directions: [Direction] = []
         if showsHorizontalGaps { directions += [.left, .right] }
@@ -131,7 +120,6 @@ final class CanvasView: NSView {
         static let x: UInt16 = 7
         static let y: UInt16 = 16
         static let e: UInt16 = 14
-        static let p: UInt16 = 35
     }
 
     /// What the next drag draws. Switching it leaves the current shape alone.
@@ -232,7 +220,7 @@ final class CanvasView: NSView {
     /// follow the pointer instead of waiting for a click. A pinned reading outranks the
     /// hover: having clicked something, you want it to stay still while you read it.
     /// Whether a mode is on that reads the frame as the cursor moves.
-    private var readsOnHover: Bool { showsGaps || showsElement || showsPadding }
+    private var readsOnHover: Bool { showsGaps || showsElement }
 
     private func updateHoverReading(at point: Point) {
         guard readsOnHover, !isReadingPinned, !isDrawing else { return }
@@ -361,25 +349,12 @@ final class CanvasView: NSView {
 
         guard let pixels = detector.bounds(around: origin, in: frozenFrame) else { return nil }
 
-        var gaps: [Direction: Gap] = [:]
-        for direction in Direction.allCases {
-            guard let span = detector.gapSpan(from: origin, direction: direction, in: frozenFrame) else { continue }
-            gaps[direction] = Gap(near: scale.points(fromBacking: Double(span.near)),
-                                  far: scale.points(fromBacking: Double(span.far)))
-        }
-
         let box = BoxRect(origin: Point(x: scale.points(fromBacking: Double(pixels.x)),
                                        y: scale.points(fromBacking: Double(pixels.y))),
                          size: Size(width: scale.points(fromBacking: Double(pixels.width)),
                        height: scale.points(fromBacking: Double(pixels.height))))
 
-        return ElementReading(
-            kind: RegionKind.of(box, onScreen: Size(width: Double(bounds.width),
-                                                    height: Double(bounds.height))),
-            box: box,
-            pixels: pixels,
-            probe: point,
-            gaps: gaps)
+        return ElementReading(box: box, pixels: pixels, probe: point)
     }
 
     /// One drawn span: the axis it lies along, the run it covers, and the word it
@@ -397,103 +372,69 @@ final class CanvasView: NSView {
     /// For a thing, the gaps to its neighbours. For a space, the space's own width and
     /// height, because when you point at a gutter its width is the measurement you came
     /// for and the width of the card beyond it is not.
-    /// The space between each of an element's edges and the first thing inside it.
+    /// The empty space belonging to the region under the cursor, measured inward from
+    /// its own edges.
     ///
-    /// Walks inward, which is the whole difference from the gaps. Each ray starts at
-    /// the middle of an edge rather than on the cursor's own line, because a cursor
-    /// lined up with the inner content is sitting in it: rays along that line could
-    /// never reach the thing they are supposed to stop at.
+    /// Inward is what makes it a gap. Outward answered a different question: point at
+    /// the dark band around a card's artwork and be told how far away the next card is,
+    /// which misses by a whole level of the layout.
     ///
-    /// The walk is clamped to the opposite edge. With nothing inside along a ray there
-    /// is nothing to stop at, so it would leave the element and report a distance into
-    /// the layout beyond as though it were padding.
-    ///
-    /// Labelled in CSS order, which is the order the four numbers get typed in.
-    private func padding(of reading: ElementReading) -> [Span] {
-        guard reading.kind == .thing, let frozenFrame else { return [] }
+    /// When neither ray finds anything before the opposite edge, the region has nothing
+    /// inside it and the region itself is the answer. Point at the column between two
+    /// cards and that column is the gap between them. The test is empirical, which is
+    /// why there is no longer a guess about whether a region is a thing or a space.
+    private func insideSpans(_ box: PixelRect,
+                             horizontal: Bool,
+                             in frame: CapturedFrame) -> [Span] {
+        let near = horizontal ? box.x : box.y
+        let last = horizontal ? box.x + box.width - 1 : box.y + box.height - 1
+        let middle = horizontal ? box.y + box.height / 2 : box.x + box.width / 2
 
-        let box = reading.pixels
-        let lastX = box.x + box.width - 1
-        let lastY = box.y + box.height - 1
-        let midX = box.x + box.width / 2
-        let midY = box.y + box.height / 2
+        // A pixel inside the edge rather than on it. The origin is the reference the
+        // walk compares against, and on a rounded or antialiased edge that pixel is a
+        // blend of the region and whatever sits behind it.
+        let fromNear = horizontal ? (x: near + 1, y: middle) : (x: middle, y: near + 1)
+        let fromFar = horizontal ? (x: last - 1, y: middle) : (x: middle, y: last - 1)
 
-        // Each ray starts one pixel inside the edge rather than on it. The origin
-        // pixel is the reference the walk compares against, and on an antialiased or
-        // rounded edge that pixel is a blend of the element and whatever is behind it.
-        // Taking the blend as the reference made the first true pixel of the padding
-        // count as a change, so the walk stopped at once and the side either read a
-        // point or was dropped as a hairline.
-        guard box.width > 2, box.height > 2 else { return [] }
+        let inward = detector.firstEdge(from: fromNear,
+                                        direction: horizontal ? .right : .down, in: frame)
+        let backward = detector.firstEdge(from: fromFar,
+                                          direction: horizontal ? .left : .up, in: frame)
 
-        let sides: [(label: String, horizontal: Bool, near: Int, limit: Int,
-                     origin: (x: Int, y: Int), direction: Direction)] = [
-            ("top", false, box.y, lastY, (midX, box.y + 1), .down),
-            ("right", true, lastX, box.x, (lastX - 1, midY), .left),
-            ("bottom", false, lastY, box.y, (midX, lastY - 1), .up),
-            ("left", true, box.x, lastX, (box.x + 1, midY), .right),
-        ]
-
-        var result: [Span] = []
-        for side in sides {
-            guard let reached = detector.firstEdge(from: side.origin,
-                                                   direction: side.direction,
-                                                   in: frozenFrame) else { continue }
-            // Reaching the far edge means the ray found nothing inside at all.
-            guard side.near < side.limit ? reached < side.limit : reached > side.limit else { continue }
-
-            // Both ends are pixels inside the band, so the run is inclusive of both.
-            let low = min(side.near, reached)
-            let high = max(side.near, reached) + 1
-            result.append(Span(horizontal: side.horizontal,
-                               gap: Gap(near: scale.points(fromBacking: Double(low)),
-                                        far: scale.points(fromBacking: Double(high))),
-                               label: side.label))
+        func span(_ low: Int, _ high: Int, _ label: String) -> Span {
+            Span(horizontal: horizontal,
+                 gap: Gap(near: scale.points(fromBacking: Double(low)),
+                          far: scale.points(fromBacking: Double(high))),
+                 label: label)
         }
 
-        return result.filter {
-            GapCredibility.isSpacing($0.gap.length,
-                                     screenSpan: $0.horizontal ? Double(bounds.width)
-                                                               : Double(bounds.height))
+        // Nothing inside, so the region is the measurement. Exempt from the page
+        // ceiling: this is a region the detector found, not a walk that may have
+        // crossed an edge it never saw.
+        guard let inward, let backward, inward < last, backward > near else {
+            let whole = span(near, last + 1, horizontal ? "width" : "height")
+            return whole.gap.length > GapCredibility.hairline ? [whole] : []
         }
+
+        return [span(near, inward + 1, horizontal ? "left" : "top"),
+                span(backward, last + 1, horizontal ? "right" : "bottom")]
+            .filter {
+                GapCredibility.isSpacing($0.gap.length,
+                                         screenSpan: horizontal ? Double(bounds.width)
+                                                                : Double(bounds.height))
+            }
     }
 
     private func spans(of reading: ElementReading) -> [Span] {
+        guard let frozenFrame else { return [] }
+        let box = reading.pixels
+        // Two pixels across leaves no room to step inside both edges.
+        guard box.width > 2, box.height > 2 else { return [] }
+
         var result: [Span] = []
-
-        switch reading.kind {
-        case .space:
-            if showsHorizontalGaps {
-                result.append(Span(horizontal: true,
-                                   gap: Gap(near: reading.box.origin.x,
-                                            far: reading.box.origin.x + reading.box.size.width),
-                                   label: "width"))
-            }
-            if showsVerticalGaps {
-                result.append(Span(horizontal: false,
-                                   gap: Gap(near: reading.box.origin.y,
-                                            far: reading.box.origin.y + reading.box.size.height),
-                                   label: "height"))
-            }
-        case .thing:
-            for direction in gapDirections {
-                guard let gap = reading.gaps[direction] else { continue }
-                result.append(Span(horizontal: direction == .left || direction == .right,
-                                   gap: gap,
-                                   label: Self.name(of: direction)))
-            }
-        }
-
-        // A space reports its own span, which is a measurement of something the
-        // detector definitely found. Only the walk out to a neighbour can have gone
-        // through an edge that was never seen, so only those get judged.
-        guard reading.kind == .thing else { return result }
-
-        return result.filter {
-            GapCredibility.isSpacing($0.gap.length,
-                                     screenSpan: $0.horizontal ? Double(bounds.width)
-                                                               : Double(bounds.height))
-        }
+        if showsVerticalGaps { result += insideSpans(box, horizontal: false, in: frozenFrame) }
+        if showsHorizontalGaps { result += insideSpans(box, horizontal: true, in: frozenFrame) }
+        return result
     }
 
     /// Shift and option are read live, so the shape reshapes the moment they are held
@@ -538,10 +479,6 @@ final class CanvasView: NSView {
             showsElement.toggle()
             if showsElement { keep(.element) }
             modeChanged()
-        case Key.p:
-            showsPadding.toggle()
-            if showsPadding { keep(.padding) }
-            modeChanged()
         case Key.g:
             if event.modifierFlags.contains(.shift) {
                 GuideStore.shared.clear()
@@ -576,19 +513,17 @@ final class CanvasView: NSView {
     private enum Mode {
         case gaps
         case element
-        case padding
     }
 
     /// X and Y are two axes of one question, so they sit together and pressing both is
-    /// the point of having two keys. E and P each ask something different, so turning
-    /// one of those on puts the others away.
+    /// the point of having two keys. E asks something different, so turning it on puts
+    /// them away and turning them on puts it away.
     private func keep(_ mode: Mode) {
         if mode != .gaps {
             showsHorizontalGaps = false
             showsVerticalGaps = false
         }
         if mode != .element { showsElement = false }
-        if mode != .padding { showsPadding = false }
     }
 
     /// Switching mode takes the hover away from whatever had it and gives it to the new
@@ -602,7 +537,6 @@ final class CanvasView: NSView {
         if showsHorizontalGaps { lit.insert("X") }
         if showsVerticalGaps { lit.insert("Y") }
         if showsElement { lit.insert("E") }
-        if showsPadding { lit.insert("P") }
         shortcuts.activeKeys = lit
         updateHoverReading(at: point)
         positionLoupe(at: point)
@@ -775,7 +709,7 @@ final class CanvasView: NSView {
     /// showing, so there is never a question of which one this means.
     private func copyCurrentValue() {
         if let reading {
-            if showsGaps || showsPadding, let gaps = gapClipboard(of: reading) {
+            if showsGaps, let gaps = gapClipboard(of: reading) {
                 copy(gaps)
                 return
             }
@@ -802,27 +736,14 @@ final class CanvasView: NSView {
     /// The gaps on screen, labelled, because a bare pair of numbers does not say which
     /// side is which. Nil when nothing was found either way, so the element's own size
     /// gets copied rather than an empty string.
-    /// Whichever measurement the current mode asks for. Only one is ever on.
-    private func drawnSpans(of reading: ElementReading) -> [Span] {
-        showsPadding ? padding(of: reading) : spans(of: reading)
-    }
-
     private func gapClipboard(of reading: ElementReading) -> String? {
-        let drawn = drawnSpans(of: reading)
+        let drawn = spans(of: reading)
         guard !drawn.isEmpty else { return nil }
         // Exactly what is on screen, in the same order, because copying something the
         // overlay is not showing is worse than copying nothing.
         return formatter.clipboard(gaps: drawn.map { (label: $0.label, points: $0.gap.length) })
     }
 
-    private static func name(of direction: Direction) -> String {
-        switch direction {
-        case .left: return "left"
-        case .right: return "right"
-        case .up: return "up"
-        case .down: return "down"
-        }
-    }
 
     /// The hex under the crosshair. The loupe has always shown it and nothing could
     /// ever take it anywhere.
@@ -848,7 +769,7 @@ final class CanvasView: NSView {
     private func refreshHUD() {
         // Each gap carries its own label, so in gap mode the readout would only be a
         // fifth number chasing the cursor across the other four.
-        if showsGaps || showsPadding {
+        if showsGaps {
             hud.text = ""
             return
         }
@@ -904,7 +825,7 @@ final class CanvasView: NSView {
     private func drawGaps(of reading: ElementReading) {
         let color = NSColor(hex: preferences.lineColorHex) ?? .systemRed
 
-        for span in drawnSpans(of: reading) {
+        for span in spans(of: reading) {
             let (horizontal, gap) = (span.horizontal, span.gap)
             let start = horizontal ? NSPoint(x: gap.near, y: reading.probe.y)
                                    : NSPoint(x: reading.probe.x, y: gap.near)
@@ -1000,10 +921,10 @@ final class CanvasView: NSView {
         if let reading {
             let snapColor = NSColor(hex: preferences.guideColorHex) ?? .systemBlue
 
-            // In gap mode the gaps are the answer, so the outline goes. It competed
-            // with four labels for attention and a tall blue column over a gutter was
-            // the worst of it.
-            if !showsGaps {
+            // The numbers are measured inward from this outline, so it is part of the
+            // answer rather than competing with it. What it does not do any more is
+            // bring a width by height readout along with it.
+            do {
                 let rect = NSRect(x: reading.box.origin.x, y: reading.box.origin.y,
                                   width: reading.box.size.width, height: reading.box.size.height)
                 snapColor.setStroke()
@@ -1014,7 +935,7 @@ final class CanvasView: NSView {
                 rect.fill()
             }
 
-            if showsGaps || showsPadding {
+            if showsGaps {
                 drawGaps(of: reading)
                 // Every gap was measured along a ray from this point, so showing it is
                 // the difference between trusting the numbers and guessing at them.
