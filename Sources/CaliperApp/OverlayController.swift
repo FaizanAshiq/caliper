@@ -31,6 +31,10 @@ final class OverlayController {
 
     var isArmed: Bool { !windows.isEmpty }
 
+    /// macOS says the permission is there and hands over nothing anyway. Surfaced so
+    /// the menu can offer the one thing that fixes it.
+    var isScreenBlocked: Bool { sampler.isBlockedDespiteAuthorisation }
+
     /// Called once at launch. See ScreenSampler.warmUp for why.
     func warmUp() {
         Task { @MainActor in await sampler.warmUp() }
@@ -70,6 +74,7 @@ final class OverlayController {
             canvas.onDismiss = { [weak self] in self?.disarm() }
             canvas.onRequestResample = { [weak self] in self?.refreshFrames() }
             canvas.onToggleShortcuts = { [weak self] in self?.toggleShortcuts() }
+            canvas.onAdjustEdgeThreshold = { [weak self] value in self?.applyEdgeThreshold(value) }
 
             window.contentView = canvas
             window.setFrame(screen.frame, display: true)
@@ -125,13 +130,26 @@ final class OverlayController {
         }
     }
 
+    /// One display's worth of keystroke, every display's worth of effect, the same way
+    /// the shortcuts strip works. Not written to disk: Settings holds the default and
+    /// this is a lean on it while you are looking at something.
+    private func applyEdgeThreshold(_ value: Double) {
+        for window in windows {
+            (window.contentView as? CanvasView)?.setEdgeThreshold(value)
+        }
+    }
+
     /// Reads every display once, then hands each canvas its own frozen frame. Nothing
     /// blocks on this: the overlay is already up and usable before it finishes.
     private func refreshFrames() {
         Task { @MainActor in
             await sampler.refresh()
+            let access: CanvasView.ScreenAccess = sampler.isBlockedDespiteAuthorisation ? .blocked
+                : ScreenSampler.isAuthorised ? .granted : .notAsked
             for (window, screenID) in zip(windows, screenIDs) {
-                (window.contentView as? CanvasView)?.apply(frozenFrame: sampler.frame(for: screenID))
+                let canvas = window.contentView as? CanvasView
+                canvas?.screenAccess = access
+                canvas?.apply(frozenFrame: sampler.frame(for: screenID))
             }
         }
     }

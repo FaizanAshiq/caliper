@@ -20,9 +20,20 @@ final class ScreenSampler {
 
     /// Checked rather than requested, so nothing prompts the user before they actually
     /// reach for a feature that needs it.
+    ///
+    /// This reports the TCC row, not whether a capture will actually succeed. See
+    /// isBlockedDespiteAuthorisation for why the difference matters.
     static var isAuthorised: Bool {
         CGPreflightScreenCaptureAccess()
     }
+
+    /// True when a refresh ran while authorised and still came back with no frame at
+    /// all. macOS keeps the TCC row against the bundle id but enforces against the
+    /// signature, so resigning the app, or letting Sequoia's monthly approval lapse,
+    /// leaves preflight answering yes while every capture returns nil. Trusting
+    /// preflight alone put the overlay on screen with the loupe, the gap readings and
+    /// element snapping all dead and nothing saying why.
+    private(set) var isBlockedDespiteAuthorisation = false
 
     static func requestAccess() {
         CGRequestScreenCaptureAccess()
@@ -47,6 +58,7 @@ final class ScreenSampler {
 
     func clear() {
         frames.removeAll()
+        isBlockedDespiteAuthorisation = false
     }
 
     /// Reads every display. Failures are per display and quiet: a display that cannot
@@ -54,7 +66,10 @@ final class ScreenSampler {
     /// display rather than taking the whole overlay down.
     func refresh() async {
         frames.removeAll()
+        isBlockedDespiteAuthorisation = false
         guard Self.isAuthorised else { return }
+        // Covers the early return below as well as the end of the loop.
+        defer { isBlockedDespiteAuthorisation = frames.isEmpty }
 
         // onScreenWindowsOnly is false here only so that this app is certain to appear
         // in content.applications. With it true the list holds apps whose windows are

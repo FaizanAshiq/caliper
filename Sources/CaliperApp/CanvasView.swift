@@ -21,10 +21,25 @@ final class CanvasView: NSView {
     private let shortcuts = ShortcutsView()
     private var frozenFrame: CapturedFrame?
 
+    /// Why there is no frozen frame, so the overlay can say what to do about it instead
+    /// of quietly dropping half its features. Never asked and asked but refused need
+    /// different answers, and the refused case is the one that looks like a bug.
+    enum ScreenAccess {
+        case granted
+        case notAsked
+        case blocked
+    }
+
+    var screenAccess: ScreenAccess = .granted
+
     var onRequestResample: (() -> Void)?
     /// Handed upwards rather than done here, because the strip has to disappear on
     /// every display at once and the choice has to outlive the overlay.
     var onToggleShortcuts: (() -> Void)?
+    /// Handed upwards so the threshold is the same on every display. Reading one screen
+    /// at one sensitivity and the next at another would make a measurement depend on
+    /// which monitor it was taken on.
+    var onAdjustEdgeThreshold: ((Double) -> Void)?
 
     private var session: DrawingSession?
 
@@ -41,11 +56,13 @@ final class CanvasView: NSView {
     /// and because a gap can only be drawn if its position travels with it.
     private struct ElementReading {
         let box: BoxRect
-        /// The point the frame was read at. Every gap was measured along a ray from
-        /// here, so each has to be drawn along that same ray or the line will disagree
-        /// with the number beside it.
+        /// The bounds in backing pixels. Kept because the inward walk has to start
+        /// exactly on an edge pixel, and the trip out to points and back loses the
+        /// half pixel and lands the ray a row outside the region.
+        let pixels: PixelRect
+        /// Where the frame was read, so the outline can be drawn and a pinned reading
+        /// knows what it belongs to.
         let probe: Point
-        let gaps: [Direction: Gap]
     }
 
     private var reading: ElementReading?
@@ -62,6 +79,14 @@ final class CanvasView: NSView {
     private var showsHorizontalGaps = false
     private var showsVerticalGaps = false
     private var showsGaps: Bool { showsHorizontalGaps || showsVerticalGaps }
+
+    /// Whether the element under the cursor is outlined and sized as you move.
+    ///
+    /// Held apart from the gaps and never on at the same time. An outline, a width by
+    /// height readout and four gap labels all landed on one card at once, and the
+    /// answer you were after was buried in the other three. One question per mode.
+    private var showsElement = false
+
     private var gapDirections: [Direction] {
         var directions: [Direction] = []
         if showsHorizontalGaps { directions += [.left, .right] }
@@ -98,6 +123,7 @@ final class CanvasView: NSView {
         static let r: UInt16 = 15
         static let x: UInt16 = 7
         static let y: UInt16 = 16
+        static let e: UInt16 = 14
     }
 
     /// What the next drag draws. Switching it leaves the current shape alone.
@@ -114,6 +140,7 @@ final class CanvasView: NSView {
         self.screenID = screenID
         self.scale = Scale(factor: Double(backingScaleFactor))
         self.formatter = UnitFormatter(scale: scale, showBackingPixels: preferences.showBackingPixels)
+        self.edgeThreshold = preferences.edgeThreshold
         super.init(frame: frame)
 
         hud.frame = bounds
@@ -197,8 +224,11 @@ final class CanvasView: NSView {
     /// With X or Y on, the element under the cursor is read on every move so the gaps
     /// follow the pointer instead of waiting for a click. A pinned reading outranks the
     /// hover: having clicked something, you want it to stay still while you read it.
+    /// Whether a mode is on that reads the frame as the cursor moves.
+    private var readsOnHover: Bool { showsGaps || showsElement }
+
     private func updateHoverReading(at point: Point) {
-        guard showsGaps, !isReadingPinned, !isDrawing else { return }
+        guard readsOnHover, !isReadingPinned, !isDrawing else { return }
         reading = read(at: point)
         refreshHUD()
         needsDisplay = true
@@ -209,7 +239,7 @@ final class CanvasView: NSView {
     /// also made Cmd+C ambiguous. Only one of them is ever on screen. X and Y take the
     /// hover for the gaps, which is the same argument a third time.
     private var canShowLoupe: Bool {
-        frozenFrame != nil && !isDrawing && session == nil && !isReadingPinned && !showsGaps
+        frozenFrame != nil && !isDrawing && session == nil && !isReadingPinned && !readsOnHover
     }
 
     private func positionLoupe(at point: Point) {
@@ -234,8 +264,38 @@ final class CanvasView: NSView {
         fatalError("CanvasView is created in code only")
     }
 
+    /// How big a brightness change counts as an edge, live.
+    ///
+    /// Settings holds the default; this is the value in play. On flat interface
+    /// chrome the default finds edges no one would argue with, but a card whose
+    /// background is a shade off the page behind it has no edge at that sensitivity,
+    /// and the inside of a photograph has far too many. Neither is a wrong default so
+    /// much as a thing you want to lean on while looking at it.
+    private var edgeThreshold: Double
+
+    /// Steps and limits for the arrow keys. The floor is above zero because at zero
+    /// every pixel differs from its neighbour and nothing has edges at all.
+    private static let thresholdStep: Double = 0.01
+    private static let thresholdCoarseStep: Double = 0.05
+    private static let thresholdRange: ClosedRange<Double> = 0.01 ... 0.9
+
     private var detector: EdgeDetector {
-        EdgeDetector(threshold: preferences.edgeThreshold, runLength: 3)
+        EdgeDetector(threshold: edgeThreshold, runLength: 3)
+    }
+
+    /// Called on every canvas when the threshold is changed on any one of them.
+    func setEdgeThreshold(_ value: Double) {
+        guard value != edgeThreshold else { return }
+        edgeThreshold = value
+        // The frozen frame is still good: only what counts as an edge in it changed.
+        if isReadingPinned, let probe = reading?.probe {
+            reading = read(at: probe)
+            isReadingPinned = reading != nil
+        } else {
+            updateHoverReading(at: currentMouseLocation())
+        }
+        refreshHUD()
+        needsDisplay = true
     }
 
     private func localPoint(_ event: NSEvent) -> Point {
@@ -324,20 +384,63 @@ final class CanvasView: NSView {
 
         guard let pixels = detector.bounds(around: origin, in: frozenFrame) else { return nil }
 
-        var gaps: [Direction: Gap] = [:]
-        for direction in Direction.allCases {
-            guard let span = detector.gapSpan(from: origin, direction: direction, in: frozenFrame) else { continue }
-            gaps[direction] = Gap(near: scale.points(fromBacking: Double(span.near)),
-                                  far: scale.points(fromBacking: Double(span.far)))
-        }
-
-        return ElementReading(
-            box: BoxRect(origin: Point(x: scale.points(fromBacking: Double(pixels.x)),
+        let box = BoxRect(origin: Point(x: scale.points(fromBacking: Double(pixels.x)),
                                        y: scale.points(fromBacking: Double(pixels.y))),
                          size: Size(width: scale.points(fromBacking: Double(pixels.width)),
-                                    height: scale.points(fromBacking: Double(pixels.height)))),
-            probe: point,
-            gaps: gaps)
+                       height: scale.points(fromBacking: Double(pixels.height))))
+
+        return ElementReading(box: box, pixels: pixels, probe: point)
+    }
+
+    /// One drawn span: the axis it lies along, the run it covers, and the word it
+    /// copies as. Held together so the drawing and the clipboard cannot disagree about
+    /// which gaps are worth showing.
+    private struct Span {
+        let horizontal: Bool
+        let gap: Gap
+        /// left, right, up or down for a thing, width or height for a space.
+        let label: String
+    }
+
+    /// What X and Y actually draw, as a span along one axis each.
+    ///
+    /// For a thing, the gaps to its neighbours. For a space, the space's own width and
+    /// height, because when you point at a gutter its width is the measurement you came
+    /// for and the width of the card beyond it is not.
+    /// The region under the cursor, measured across or down.
+    ///
+    /// One number per axis, and always the region itself. Earlier versions walked
+    /// inward from both edges to report the two paddings at once, which was accurate
+    /// and wrong to want: at a card's corner all four walks reach its outer edges, so
+    /// pointing near the corner of a band got you the card and four numbers instead of
+    /// the band and one. Moving the cursor a little into the band you actually mean is
+    /// quicker than reading four labels to find the one you asked for.
+    ///
+    /// So: point at the top band of a card and Y is its top padding. Point at the
+    /// column between two cards and X is the gap between them. Point at a solid shape
+    /// and you get its size. Same rule every time, and no rays, because the region's
+    /// own bounds already came out of the edge walk that found it.
+    private func span(_ box: PixelRect, horizontal: Bool) -> Span? {
+        let near = horizontal ? box.x : box.y
+        let last = horizontal ? box.x + box.width - 1 : box.y + box.height - 1
+
+        let span = Span(horizontal: horizontal,
+                        gap: Gap(near: scale.points(fromBacking: Double(near)),
+                                 far: scale.points(fromBacking: Double(last + 1))),
+                        label: horizontal ? "width" : "height")
+        // A region a point thick is a rule, and labelling it answers nothing.
+        return span.gap.length > GapCredibility.hairline ? span : nil
+    }
+
+    private func spans(of reading: ElementReading) -> [Span] {
+        var result: [Span] = []
+        if showsVerticalGaps, let down = span(reading.pixels, horizontal: false) {
+            result.append(down)
+        }
+        if showsHorizontalGaps, let across = span(reading.pixels, horizontal: true) {
+            result.append(across)
+        }
+        return result
     }
 
     /// Shift and option are read live, so the shape reshapes the moment they are held
@@ -372,10 +475,16 @@ final class CanvasView: NSView {
             needsDisplay = true
         case Key.x:
             showsHorizontalGaps.toggle()
-            gapsChanged()
+            if showsHorizontalGaps { keep(.gaps) }
+            modeChanged()
         case Key.y:
             showsVerticalGaps.toggle()
-            gapsChanged()
+            if showsVerticalGaps { keep(.gaps) }
+            modeChanged()
+        case Key.e:
+            showsElement.toggle()
+            if showsElement { keep(.element) }
+            modeChanged()
         case Key.g:
             if event.modifierFlags.contains(.shift) {
                 GuideStore.shared.clear()
@@ -386,6 +495,18 @@ final class CanvasView: NSView {
         case Key.r:
             onRequestResample?()
         case Key.left, Key.right, Key.up, Key.down:
+            // With nothing drawn there is nothing to nudge, so the arrows tune the
+            // detector instead. Up and down only: left and right would have to mean
+            // the same thing, and two keys for one axis reads as a bug.
+            if session == nil, event.keyCode == Key.up || event.keyCode == Key.down {
+                let step = event.modifierFlags.contains(.shift)
+                    ? Self.thresholdCoarseStep : Self.thresholdStep
+                let moved = edgeThreshold + (event.keyCode == Key.up ? step : -step)
+                onAdjustEdgeThreshold?(min(max(moved, Self.thresholdRange.lowerBound),
+                                           Self.thresholdRange.upperBound))
+                return
+            }
+
             let amount: Double = event.modifierFlags.contains(.shift) ? 10 : 1
             switch event.keyCode {
             case Key.left:  session?.nudge(dx: -amount, dy: 0)
@@ -404,17 +525,36 @@ final class CanvasView: NSView {
         }
     }
 
-    /// Turning the gaps on takes the hover away from the loupe and gives it to the
-    /// element under the cursor. Turning the last one off hands it straight back, so
-    /// neither tool is left waiting for a mouse move to notice the mode changed.
-    private func gapsChanged() {
+    /// What the hover is currently answering. Exactly one of these at a time: an
+    /// outline, a width by height readout and four gap labels all landed on one card
+    /// at once before that, and whichever number you came for was buried in the rest.
+    private enum Mode {
+        case gaps
+        case element
+    }
+
+    /// X and Y are two axes of one question, so they sit together and pressing both is
+    /// the point of having two keys. E asks something different, so turning it on puts
+    /// them away and turning them on puts it away.
+    private func keep(_ mode: Mode) {
+        if mode != .gaps {
+            showsHorizontalGaps = false
+            showsVerticalGaps = false
+        }
+        if mode != .element { showsElement = false }
+    }
+
+    /// Switching mode takes the hover away from whatever had it and gives it to the new
+    /// one, right away, so nothing is left waiting for a mouse move to notice.
+    private func modeChanged() {
         let point = currentMouseLocation()
-        if !showsGaps, !isReadingPinned { reading = nil }
+        if !readsOnHover, !isReadingPinned { reading = nil }
         // X and Y are modes with nothing else on screen to say they are on, so the
         // strip lights their own entries up.
         var lit: Set<String> = []
         if showsHorizontalGaps { lit.insert("X") }
         if showsVerticalGaps { lit.insert("Y") }
+        if showsElement { lit.insert("E") }
         shortcuts.activeKeys = lit
         updateHoverReading(at: point)
         positionLoupe(at: point)
@@ -615,22 +755,13 @@ final class CanvasView: NSView {
     /// side is which. Nil when nothing was found either way, so the element's own size
     /// gets copied rather than an empty string.
     private func gapClipboard(of reading: ElementReading) -> String? {
-        let entries = gapDirections.compactMap { direction -> (label: String, points: Double)? in
-            guard let gap = reading.gaps[direction], gap.length >= 1 else { return nil }
-            return (label: Self.name(of: direction), points: gap.length)
-        }
-        guard !entries.isEmpty else { return nil }
-        return formatter.clipboard(gaps: entries)
+        let drawn = spans(of: reading)
+        guard !drawn.isEmpty else { return nil }
+        // Exactly what is on screen, in the same order, because copying something the
+        // overlay is not showing is worse than copying nothing.
+        return formatter.clipboard(gaps: drawn.map { (label: $0.label, points: $0.gap.length) })
     }
 
-    private static func name(of direction: Direction) -> String {
-        switch direction {
-        case .left: return "left"
-        case .right: return "right"
-        case .up: return "up"
-        case .down: return "down"
-        }
-    }
 
     /// The hex under the crosshair. The loupe has always shown it and nothing could
     /// ever take it anywhere.
@@ -654,9 +785,13 @@ final class CanvasView: NSView {
     }
 
     private func refreshHUD() {
-        // The gaps carry their own labels, drawn on the gaps themselves, so the readout
-        // stays the element's own size rather than repeating four numbers already on
-        // screen a few points away.
+        // Each gap carries its own label, so in gap mode the readout would only be a
+        // fifth number chasing the cursor across the other four.
+        if showsGaps {
+            hud.text = ""
+            return
+        }
+
         if let reading {
             hud.text = formatter.display(box: reading.box)
             hud.anchor = NSPoint(x: reading.box.origin.x + reading.box.size.width,
@@ -681,11 +816,33 @@ final class CanvasView: NSView {
         }
     }
 
+    /// Says why the loupe, the gap readings and element snapping are missing. Only ever
+    /// on screen when there is no frame, and silent while a fresh read is still in
+    /// flight, so arming does not flash a warning that is about to be untrue.
+    private var screenNote: String? {
+        guard frozenFrame == nil else { return nil }
+        switch screenAccess {
+        case .granted:
+            return nil
+        case .notAsked:
+            return "Screen Recording is off. The loupe, the X and Y gaps and element snapping need it."
+        case .blocked:
+            return "macOS is refusing to hand over the screen. Switch Caliper off and on again in Screen Recording settings."
+        }
+    }
+
     /// How far a tick reaches either side of the gap line, and how far the label sits
     /// off it. A gap can be eight points wide, so the label goes beside the line rather
     /// than in it, where a pill would cover the very thing it is measuring.
     private static let tickReach: CGFloat = 5
-    private static let labelReach: CGFloat = 17
+    /// One step away from the line, and the distance a label is nudged when something
+    /// is already where it wanted to sit. A little over a pill's own height, so two
+    /// stacked pills clear each other in one move.
+    private static let labelStep: CGFloat = 26
+
+    /// Kept clear around the cursor. The crosshair is drawn by the system over
+    /// everything the canvas draws, so a pill under it is simply gone.
+    private static let cursorKeepOut: CGFloat = 34
 
     /// Each gap is drawn along the ray it was measured on, with a tick at both ends and
     /// the number beside it. Running the line through the middle of the element instead
@@ -693,10 +850,14 @@ final class CanvasView: NSView {
     private func drawGaps(of reading: ElementReading) {
         let color = NSColor(hex: preferences.lineColorHex) ?? .systemRed
 
-        for direction in gapDirections {
-            guard let gap = reading.gaps[direction], gap.length >= 1 else { continue }
-            let horizontal = direction == .left || direction == .right
+        // The cursor goes in first, so every label treats it as occupied.
+        var placed = [NSRect(x: reading.probe.x - Self.cursorKeepOut / 2,
+                             y: reading.probe.y - Self.cursorKeepOut / 2,
+                             width: Self.cursorKeepOut,
+                             height: Self.cursorKeepOut)]
 
+        for span in spans(of: reading) {
+            let (horizontal, gap) = (span.horizontal, span.gap)
             let start = horizontal ? NSPoint(x: gap.near, y: reading.probe.y)
                                    : NSPoint(x: reading.probe.x, y: gap.near)
             let end = horizontal ? NSPoint(x: gap.far, y: reading.probe.y)
@@ -720,30 +881,72 @@ final class CanvasView: NSView {
             color.setStroke()
             path.stroke()
 
+            // The axis goes in the label, so a number always says which way it runs.
             let middle = NSPoint(x: (start.x + end.x) / 2, y: (start.y + end.y) / 2)
-            let label = horizontal ? NSPoint(x: middle.x, y: middle.y - Self.labelReach)
-                                   : NSPoint(x: middle.x + Self.labelReach, y: middle.y)
-            drawPill(formatter.compact(points: gap.length), centredAt: label)
+            place("\(horizontal ? "↔" : "↕") \(formatter.compact(points: gap.length))",
+                  from: middle, horizontal: horizontal, avoiding: &placed)
         }
     }
 
     /// A gap label, in the same dark pill the readout uses. Drawn here rather than
     /// through HUDView because four can be on screen at once and each one belongs to a
     /// gap of its own rather than to the cursor.
+    private static let pillFont = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .semibold)
+    private static let pillPadding: CGFloat = 5
+
+    private func pillRect(_ text: String, centredAt centre: NSPoint) -> NSRect {
+        let size = NSAttributedString(string: text, attributes: [.font: Self.pillFont]).size()
+        return NSRect(x: centre.x - size.width / 2 - Self.pillPadding,
+                      y: centre.y - size.height / 2 - Self.pillPadding,
+                      width: size.width + Self.pillPadding * 2,
+                      height: size.height + Self.pillPadding * 2)
+    }
+
     private func drawPill(_ text: String, centredAt centre: NSPoint) {
         let string = NSAttributedString(string: text, attributes: [
-            .font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .semibold),
+            .font: Self.pillFont,
             .foregroundColor: NSColor.white,
         ])
-        let size = string.size()
-        let padding: CGFloat = 5
-        let box = NSRect(x: centre.x - size.width / 2 - padding,
-                         y: centre.y - size.height / 2 - padding,
-                         width: size.width + padding * 2,
-                         height: size.height + padding * 2)
+        let box = pillRect(text, centredAt: centre)
         NSColor.black.withAlphaComponent(0.82).setFill()
         NSBezierPath(roundedRect: box, xRadius: 5, yRadius: 5).fill()
-        string.draw(at: NSPoint(x: box.minX + padding, y: box.minY + padding))
+        string.draw(at: NSPoint(x: box.minX + Self.pillPadding,
+                                y: box.minY + Self.pillPadding))
+    }
+
+    /// Draws a label clear of the cursor and of the labels already down.
+    ///
+    /// Both spans run through the cursor, so their midpoints land next to it and next
+    /// to each other. On a wide thin band the two pills arrived in the same spot, one
+    /// on top of the other and both under the crosshair. So the label starts a step off
+    /// the line and keeps stepping until it is clear, perpendicular to its own span,
+    /// then the other way if it would leave the screen.
+    private func place(_ text: String,
+                       from middle: NSPoint,
+                       horizontal: Bool,
+                       avoiding placed: inout [NSRect]) {
+        let step = Self.labelStep
+        let directions: [NSPoint] = horizontal
+            ? [NSPoint(x: 0, y: -step), NSPoint(x: 0, y: step)]
+            : [NSPoint(x: step, y: 0), NSPoint(x: -step, y: 0)]
+
+        // The first direction's first step, used when nothing anywhere is clear.
+        var chosen = NSPoint(x: middle.x + directions[0].x, y: middle.y + directions[0].y)
+
+        search: for direction in directions {
+            for attempt in 1 ... 5 {
+                let candidate = NSPoint(x: middle.x + direction.x * CGFloat(attempt),
+                                        y: middle.y + direction.y * CGFloat(attempt))
+                let rect = pillRect(text, centredAt: candidate)
+                guard bounds.contains(rect) else { break }
+                guard !placed.contains(where: { $0.intersects(rect) }) else { continue }
+                chosen = candidate
+                break search
+            }
+        }
+
+        placed.append(pillRect(text, centredAt: chosen))
+        drawPill(text, centredAt: chosen)
     }
 
     override func draw(_ dirtyRect: NSRect) {
@@ -785,17 +988,41 @@ final class CanvasView: NSView {
         }
 
         if let reading {
-            let rect = NSRect(x: reading.box.origin.x, y: reading.box.origin.y,
-                              width: reading.box.size.width, height: reading.box.size.height)
             let snapColor = NSColor(hex: preferences.guideColorHex) ?? .systemBlue
-            snapColor.setStroke()
-            let outline = NSBezierPath(rect: rect)
-            outline.lineWidth = 1
-            outline.stroke()
-            snapColor.withAlphaComponent(0.10).setFill()
-            rect.fill()
 
-            if showsGaps { drawGaps(of: reading) }
+            // The numbers are measured inward from this outline, so it is part of the
+            // answer rather than competing with it. What it does not do any more is
+            // bring a width by height readout along with it.
+            do {
+                let rect = NSRect(x: reading.box.origin.x, y: reading.box.origin.y,
+                                  width: reading.box.size.width, height: reading.box.size.height)
+                snapColor.setStroke()
+                let outline = NSBezierPath(rect: rect)
+                outline.lineWidth = 1
+                outline.stroke()
+                snapColor.withAlphaComponent(0.10).setFill()
+                rect.fill()
+            }
+
+            if showsGaps {
+                drawGaps(of: reading)
+                // Every gap was measured along a ray from this point, so showing it is
+                // the difference between trusting the numbers and guessing at them.
+                snapColor.setFill()
+                NSBezierPath(ovalIn: NSRect(x: reading.probe.x - 2.5, y: reading.probe.y - 2.5,
+                                            width: 5, height: 5)).fill()
+            }
+        }
+
+        if let screenNote {
+            drawPill(screenNote, centredAt: NSPoint(x: bounds.midX, y: 44))
+        }
+
+        // Only while it differs from the saved default, so it explains a surprising
+        // reading without sitting on screen the rest of the time.
+        if edgeThreshold != preferences.edgeThreshold {
+            drawPill(String(format: "edge %.2f", edgeThreshold),
+                     centredAt: NSPoint(x: bounds.midX, y: bounds.maxY - 72))
         }
 
         guard let session else { return }
