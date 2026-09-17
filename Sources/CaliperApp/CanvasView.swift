@@ -36,6 +36,10 @@ final class CanvasView: NSView {
     /// Handed upwards rather than done here, because the strip has to disappear on
     /// every display at once and the choice has to outlive the overlay.
     var onToggleShortcuts: (() -> Void)?
+    /// Handed upwards so the threshold is the same on every display. Reading one screen
+    /// at one sensitivity and the next at another would make a measurement depend on
+    /// which monitor it was taken on.
+    var onAdjustEdgeThreshold: ((Double) -> Void)?
 
     private var session: DrawingSession?
 
@@ -136,6 +140,7 @@ final class CanvasView: NSView {
         self.screenID = screenID
         self.scale = Scale(factor: Double(backingScaleFactor))
         self.formatter = UnitFormatter(scale: scale, showBackingPixels: preferences.showBackingPixels)
+        self.edgeThreshold = preferences.edgeThreshold
         super.init(frame: frame)
 
         hud.frame = bounds
@@ -259,8 +264,38 @@ final class CanvasView: NSView {
         fatalError("CanvasView is created in code only")
     }
 
+    /// How big a brightness change counts as an edge, live.
+    ///
+    /// Settings holds the default; this is the value in play. On flat interface
+    /// chrome the default finds edges no one would argue with, but a card whose
+    /// background is a shade off the page behind it has no edge at that sensitivity,
+    /// and the inside of a photograph has far too many. Neither is a wrong default so
+    /// much as a thing you want to lean on while looking at it.
+    private var edgeThreshold: Double
+
+    /// Steps and limits for the arrow keys. The floor is above zero because at zero
+    /// every pixel differs from its neighbour and nothing has edges at all.
+    private static let thresholdStep: Double = 0.01
+    private static let thresholdCoarseStep: Double = 0.05
+    private static let thresholdRange: ClosedRange<Double> = 0.01 ... 0.9
+
     private var detector: EdgeDetector {
-        EdgeDetector(threshold: preferences.edgeThreshold, runLength: 3)
+        EdgeDetector(threshold: edgeThreshold, runLength: 3)
+    }
+
+    /// Called on every canvas when the threshold is changed on any one of them.
+    func setEdgeThreshold(_ value: Double) {
+        guard value != edgeThreshold else { return }
+        edgeThreshold = value
+        // The frozen frame is still good: only what counts as an edge in it changed.
+        if isReadingPinned, let probe = reading?.probe {
+            reading = read(at: probe)
+            isReadingPinned = reading != nil
+        } else {
+            updateHoverReading(at: currentMouseLocation())
+        }
+        refreshHUD()
+        needsDisplay = true
     }
 
     private func localPoint(_ event: NSEvent) -> Point {
@@ -460,6 +495,18 @@ final class CanvasView: NSView {
         case Key.r:
             onRequestResample?()
         case Key.left, Key.right, Key.up, Key.down:
+            // With nothing drawn there is nothing to nudge, so the arrows tune the
+            // detector instead. Up and down only: left and right would have to mean
+            // the same thing, and two keys for one axis reads as a bug.
+            if session == nil, event.keyCode == Key.up || event.keyCode == Key.down {
+                let step = event.modifierFlags.contains(.shift)
+                    ? Self.thresholdCoarseStep : Self.thresholdStep
+                let moved = edgeThreshold + (event.keyCode == Key.up ? step : -step)
+                onAdjustEdgeThreshold?(min(max(moved, Self.thresholdRange.lowerBound),
+                                           Self.thresholdRange.upperBound))
+                return
+            }
+
             let amount: Double = event.modifierFlags.contains(.shift) ? 10 : 1
             switch event.keyCode {
             case Key.left:  session?.nudge(dx: -amount, dy: 0)
@@ -918,6 +965,13 @@ final class CanvasView: NSView {
 
         if let screenNote {
             drawPill(screenNote, centredAt: NSPoint(x: bounds.midX, y: 44))
+        }
+
+        // Only while it differs from the saved default, so it explains a surprising
+        // reading without sitting on screen the rest of the time.
+        if edgeThreshold != preferences.edgeThreshold {
+            drawPill(String(format: "edge %.2f", edgeThreshold),
+                     centredAt: NSPoint(x: bounds.midX, y: bounds.maxY - 72))
         }
 
         guard let session else { return }

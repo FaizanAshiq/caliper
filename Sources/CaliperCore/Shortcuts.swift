@@ -54,7 +54,11 @@ public enum Shortcuts {
                  detail: "Shapes clip onto guides, screen edges and the element under them. Hold command to ignore that",
                  group: 1),
         Shortcut(keys: "↑↓←→", action: "nudge",
-                 detail: "Arrow keys nudge by 1 point, with shift by 10", group: 1),
+                 detail: "With a shape drawn, the arrow keys nudge it by 1 point, or 10 with shift",
+                 group: 1),
+        Shortcut(keys: "↑↓", action: "edge sensitivity",
+                 detail: "With nothing drawn, up and down change how big a brightness change counts as an edge, so a faint boundary can be caught or the inside of a photograph ignored",
+                 group: 1),
 
         Shortcut(keys: "G", action: "guide",
                  detail: "Press G to drop a guide, or option G for a horizontal one", group: 2),

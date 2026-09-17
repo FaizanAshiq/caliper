@@ -74,6 +74,7 @@ final class OverlayController {
             canvas.onDismiss = { [weak self] in self?.disarm() }
             canvas.onRequestResample = { [weak self] in self?.refreshFrames() }
             canvas.onToggleShortcuts = { [weak self] in self?.toggleShortcuts() }
+            canvas.onAdjustEdgeThreshold = { [weak self] value in self?.applyEdgeThreshold(value) }
 
             window.contentView = canvas
             window.setFrame(screen.frame, display: true)
@@ -126,6 +127,15 @@ final class OverlayController {
         try? preferences.save(to: Preferences.defaultFileURL)
         for window in windows {
             (window.contentView as? CanvasView)?.setShortcuts(visible: preferences.showShortcuts)
+        }
+    }
+
+    /// One display's worth of keystroke, every display's worth of effect, the same way
+    /// the shortcuts strip works. Not written to disk: Settings holds the default and
+    /// this is a lean on it while you are looking at something.
+    private func applyEdgeThreshold(_ value: Double) {
+        for window in windows {
+            (window.contentView as? CanvasView)?.setEdgeThreshold(value)
         }
     }
 
