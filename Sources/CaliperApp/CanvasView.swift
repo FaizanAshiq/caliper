@@ -27,18 +27,54 @@ final class CanvasView: NSView {
     var onToggleShortcuts: (() -> Void)?
 
     private var session: DrawingSession?
-    private var snappedBox: BoxRect?
-    private var snappedGaps: [Direction: Double] = [:]
-    /// Where the user clicked before there was a frame to read. Held so the snap can
+
+    /// The empty run between an element and the next one along, as the two coordinates
+    /// it spans. A length on its own can be printed but never drawn.
+    private struct Gap {
+        let near: Double
+        let far: Double
+        var length: Double { abs(far - near) }
+    }
+
+    /// What was read off the frozen frame around one point. Held whole rather than as
+    /// loose fields because the same reading serves a live hover and a pinned click,
+    /// and because a gap can only be drawn if its position travels with it.
+    private struct ElementReading {
+        let box: BoxRect
+        /// The point the frame was read at. Every gap was measured along a ray from
+        /// here, so each has to be drawn along that same ray or the line will disagree
+        /// with the number beside it.
+        let probe: Point
+        let gaps: [Direction: Gap]
+    }
+
+    private var reading: ElementReading?
+    /// True once a click has fixed the reading in place, so moving the mouse no longer
+    /// replaces it. A hover reading has no such claim and is redrawn on every move.
+    private var isReadingPinned = false
+    /// Where the user clicked before there was a frame to read. Held so the reading can
     /// finish itself the moment one arrives, rather than the click being swallowed.
-    private var pendingSnap: Point?
+    private var pendingRead: Point?
+
+    /// Whether X and Y have been pressed. They decide which gaps are drawn and nothing
+    /// else, so two flags beat inventing an axis type for them. With both off the
+    /// overlay behaves exactly as it did before they existed.
+    private var showsHorizontalGaps = false
+    private var showsVerticalGaps = false
+    private var showsGaps: Bool { showsHorizontalGaps || showsVerticalGaps }
+    private var gapDirections: [Direction] {
+        var directions: [Direction] = []
+        if showsHorizontalGaps { directions += [.left, .right] }
+        if showsVerticalGaps { directions += [.up, .down] }
+        return directions
+    }
     /// What the shape is currently caught on, so it can be drawn. Without this the
     /// clipping is invisible and indistinguishable from the shape not moving smoothly.
     private var clipLines: (vertical: Double?, horizontal: Double?) = (nil, nil)
     private var isConstrained = false
     private var isFromCentre = false
-    /// Command turns the clipping off, so a shape being moved goes exactly where the
-    /// mouse goes instead of catching on nearby edges.
+    /// Command turns the clipping off, so the shape goes exactly where the mouse goes
+    /// instead of catching on nearby edges.
     private var isFreeMove = false
     /// Whether the user wants the strip at all, separately from whether it is being
     /// held back for the duration of a drag.
@@ -60,6 +96,8 @@ final class CanvasView: NSView {
         static let h: UInt16 = 4
         static let m: UInt16 = 46
         static let r: UInt16 = 15
+        static let x: UInt16 = 7
+        static let y: UInt16 = 16
     }
 
     /// What the next drag draws. Switching it leaves the current shape alone.
@@ -90,6 +128,7 @@ final class CanvasView: NSView {
         // Added last so it draws over the loupe rather than under it, on the rare
         // occasion the cursor is down at the bottom of the screen.
         shortcutsWanted = preferences.showShortcuts
+        shortcuts.accentHex = preferences.guideColorHex
         shortcuts.isHidden = !shortcutsWanted
         addSubview(shortcuts)
     }
@@ -117,9 +156,9 @@ final class CanvasView: NSView {
         self.frozenFrame = frozenFrame
         loupe.isHidden = !canShowLoupe
 
-        if frozenFrame != nil, let point = pendingSnap {
-            pendingSnap = nil
-            snap(at: point)
+        if frozenFrame != nil, let point = pendingRead {
+            pendingRead = nil
+            pinReading(at: point)
             refreshHUD()
         }
 
@@ -127,24 +166,50 @@ final class CanvasView: NSView {
     }
 
     /// The cursor has to be followed with no button held, which needs a tracking area.
+    /// cursorUpdate comes along for the crosshair below.
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
         trackingAreas.forEach(removeTrackingArea)
         addTrackingArea(NSTrackingArea(rect: bounds,
-                                       options: [.activeAlways, .mouseMoved, .inVisibleRect],
+                                       options: [.activeAlways, .mouseMoved, .cursorUpdate, .inVisibleRect],
                                        owner: self,
                                        userInfo: nil))
     }
 
+    /// An arrow pointer on a measuring tool is a lie about where the reading is taken
+    /// from: its tip is off to one side of the hotspot. The crosshair is centred on it.
+    /// Set two ways because a borderless window at screen saver level does not always
+    /// get the cursor rect applied on its own.
+    override func resetCursorRects() {
+        addCursorRect(bounds, cursor: .crosshair)
+    }
+
+    override func cursorUpdate(with event: NSEvent) {
+        NSCursor.crosshair.set()
+    }
+
     override func mouseMoved(with event: NSEvent) {
-        positionLoupe(at: localPoint(event))
+        let point = localPoint(event)
+        positionLoupe(at: point)
+        updateHoverReading(at: point)
+    }
+
+    /// With X or Y on, the element under the cursor is read on every move so the gaps
+    /// follow the pointer instead of waiting for a click. A pinned reading outranks the
+    /// hover: having clicked something, you want it to stay still while you read it.
+    private func updateHoverReading(at point: Point) {
+        guard showsGaps, !isReadingPinned, !isDrawing else { return }
+        reading = read(at: point)
+        refreshHUD()
+        needsDisplay = true
     }
 
     /// The loupe is the colour tool and a shape is the measuring tool. Showing both
     /// at once put the magnifier on top of the reading it was competing with, and it
-    /// also made Cmd+C ambiguous. Only one of them is ever on screen.
+    /// also made Cmd+C ambiguous. Only one of them is ever on screen. X and Y take the
+    /// hover for the gaps, which is the same argument a third time.
     private var canShowLoupe: Bool {
-        frozenFrame != nil && !isDrawing && session == nil && snappedBox == nil
+        frozenFrame != nil && !isDrawing && session == nil && !isReadingPinned && !showsGaps
     }
 
     private func positionLoupe(at point: Point) {
@@ -185,9 +250,9 @@ final class CanvasView: NSView {
     }
 
     override func mouseDown(with event: NSEvent) {
-        snappedBox = nil
-        snappedGaps = [:]
-        pendingSnap = nil
+        reading = nil
+        isReadingPinned = false
+        pendingRead = nil
         isDrawing = true
         // The loupe helps you find the spot, not read the answer. It cannot follow the
         // cursor during a drag anyway, because mouseMoved stops firing once a button is
@@ -213,47 +278,66 @@ final class CanvasView: NSView {
 
     override func mouseUp(with event: NSEvent) {
         session?.move(to: localPoint(event))
+        // Clip where the drag actually finished and then make it permanent. The number
+        // on screen when the button comes up is the one about to be copied.
+        updateClipping()
+        session?.commitCursorClip()
         isDrawing = false
         clearClipLines()
-        positionLoupe(at: localPoint(event))
         updateShortcuts()
 
         // Under 3 points of travel reads as a click rather than a drag.
         if let session, session.line(constrained: false).distance < 3 {
             self.session = nil
-            snap(at: localPoint(event))
+            pinReading(at: localPoint(event))
         }
 
+        // After the reading, so a click that found nothing hands the hover back to the
+        // loupe rather than leaving the overlay with nothing on it.
+        positionLoupe(at: localPoint(event))
         refreshHUD()
         needsDisplay = true
     }
 
-    /// Clicking without dragging asks the frame what is under the cursor: its bounds,
-    /// and the empty space between it and whatever sits either side.
-    private func snap(at point: Point) {
-        snappedBox = nil
-        snappedGaps = [:]
+    /// Clicking without dragging fixes the reading in place, so it survives the mouse
+    /// moving off and can be copied at leisure.
+    private func pinReading(at point: Point) {
+        reading = nil
+        isReadingPinned = false
 
-        guard let frozenFrame else {
-            pendingSnap = point
+        guard frozenFrame != nil else {
+            pendingRead = point
             return
         }
+
+        reading = read(at: point)
+        isReadingPinned = reading != nil
+    }
+
+    /// Asks the frame what is under a point: the element's bounds, and where the empty
+    /// space between it and whatever sits each way runs from and to.
+    private func read(at point: Point) -> ElementReading? {
+        guard let frozenFrame else { return nil }
 
         let origin = (x: Int(scale.backing(fromPoints: point.x)),
                       y: Int(scale.backing(fromPoints: point.y)))
 
-        guard let pixels = detector.bounds(around: origin, in: frozenFrame) else { return }
+        guard let pixels = detector.bounds(around: origin, in: frozenFrame) else { return nil }
 
-        snappedBox = BoxRect(
-            origin: Point(x: scale.points(fromBacking: Double(pixels.x)),
-                          y: scale.points(fromBacking: Double(pixels.y))),
-            size: Size(width: scale.points(fromBacking: Double(pixels.width)),
-                       height: scale.points(fromBacking: Double(pixels.height))))
-
+        var gaps: [Direction: Gap] = [:]
         for direction in Direction.allCases {
-            guard let gap = detector.gap(from: origin, direction: direction, in: frozenFrame) else { continue }
-            snappedGaps[direction] = scale.points(fromBacking: Double(gap))
+            guard let span = detector.gapSpan(from: origin, direction: direction, in: frozenFrame) else { continue }
+            gaps[direction] = Gap(near: scale.points(fromBacking: Double(span.near)),
+                                  far: scale.points(fromBacking: Double(span.far)))
         }
+
+        return ElementReading(
+            box: BoxRect(origin: Point(x: scale.points(fromBacking: Double(pixels.x)),
+                                       y: scale.points(fromBacking: Double(pixels.y))),
+                         size: Size(width: scale.points(fromBacking: Double(pixels.width)),
+                                    height: scale.points(fromBacking: Double(pixels.height)))),
+            probe: point,
+            gaps: gaps)
     }
 
     /// Shift and option are read live, so the shape reshapes the moment they are held
@@ -271,7 +355,7 @@ final class CanvasView: NSView {
     override func keyDown(with event: NSEvent) {
         switch event.keyCode {
         case Key.escape:
-            if session != nil || snappedBox != nil {
+            if session != nil || isReadingPinned {
                 clearDrawing()
             } else {
                 onDismiss?()
@@ -285,6 +369,13 @@ final class CanvasView: NSView {
             onToggleShortcuts?()
         case Key.m:
             pendingShape = pendingShape == .line ? .box : .line
+            needsDisplay = true
+        case Key.x:
+            showsHorizontalGaps.toggle()
+            gapsChanged()
+        case Key.y:
+            showsVerticalGaps.toggle()
+            gapsChanged()
         case Key.g:
             if event.modifierFlags.contains(.shift) {
                 GuideStore.shared.clear()
@@ -313,15 +404,36 @@ final class CanvasView: NSView {
         }
     }
 
+    /// Turning the gaps on takes the hover away from the loupe and gives it to the
+    /// element under the cursor. Turning the last one off hands it straight back, so
+    /// neither tool is left waiting for a mouse move to notice the mode changed.
+    private func gapsChanged() {
+        let point = currentMouseLocation()
+        if !showsGaps, !isReadingPinned { reading = nil }
+        // X and Y are modes with nothing else on screen to say they are on, so the
+        // strip lights their own entries up.
+        var lit: Set<String> = []
+        if showsHorizontalGaps { lit.insert("X") }
+        if showsVerticalGaps { lit.insert("Y") }
+        shortcuts.activeKeys = lit
+        updateHoverReading(at: point)
+        positionLoupe(at: point)
+        refreshHUD()
+        needsDisplay = true
+    }
+
     /// Escape gets you back to an empty overlay before it gets you out of one, which
     /// is also the only way back to the loupe once something has been measured.
     private func clearDrawing() {
         session = nil
-        snappedBox = nil
-        snappedGaps = [:]
+        reading = nil
+        isReadingPinned = false
+        pendingRead = nil
         clearClipLines()
+        let point = currentMouseLocation()
+        updateHoverReading(at: point)
+        positionLoupe(at: point)
         refreshHUD()
-        positionLoupe(at: currentMouseLocation())
         needsDisplay = true
     }
 
@@ -341,16 +453,65 @@ final class CanvasView: NSView {
         needsDisplay = true
     }
 
-    /// While a shape is being moved with space, clip its edges onto anything nearby:
-    /// the guides, the edges of the screen, and the element under the cursor. Holding
-    /// command turns it off. The offset is recomputed from scratch on every move, so
-    /// moving away from an edge releases the shape instead of dragging the clip along.
+    /// Clip the shape onto anything nearby: the guides, the edges of the screen, and
+    /// the elements under it. On every drag, not only while space is held, because
+    /// landing on the edge you were aiming at is what makes the reading worth trusting.
+    /// Holding command turns it off. The offset is recomputed from scratch on every
+    /// move, so moving away from an edge releases the shape instead of dragging the
+    /// clip along behind it.
     private func updateClipping() {
         session?.setSnapOffset(dx: 0, dy: 0)
+        session?.setCursorClip(dx: 0, dy: 0)
         clipLines = (nil, nil)
 
-        guard let current = session, current.isMoving, !isFreeMove else { return }
+        guard let current = session, !isFreeMove else { return }
 
+        if current.isMoving {
+            clipWholeShape(current)
+        } else if isDrawing {
+            clipLooseEnd(current)
+        }
+    }
+
+    /// While the shape is being drawn, only the end under the cursor clips. The anchor
+    /// stays where the mouse went down: space is how you move a point you have already
+    /// placed, and clipping it from here would move it behind your back.
+    private func clipLooseEnd(_ current: DrawingSession) {
+        var end = current.cursor
+        var clipsX = true
+        var clipsY = true
+
+        // Shift is a precision constraint of its own and it is applied after the clip,
+        // so clipping the axis the line is pinned on would land it just off the
+        // candidate it had caught. Only the free axis clips. A squared box clips on
+        // neither, because squaring rederives both sides from whichever is longer.
+        if isConstrained {
+            switch current.shape {
+            case .box:
+                return
+            case .line:
+                let line = current.line(constrained: true)
+                end = line.end
+                clipsX = line.dy == 0 && line.dx != 0
+                clipsY = line.dx == 0 && line.dy != 0
+            }
+        }
+
+        guard clipsX || clipsY else { return }
+
+        let candidates = clipCandidates(probing: [end])
+        let horizontalClip = clipsX
+            ? Snapping.adjustment(for: [end.x], candidates: candidates.verticals) : nil
+        let verticalClip = clipsY
+            ? Snapping.adjustment(for: [end.y], candidates: candidates.horizontals) : nil
+
+        clipLines = (vertical: horizontalClip?.candidate, horizontal: verticalClip?.candidate)
+        session?.setCursorClip(dx: horizontalClip?.delta ?? 0, dy: verticalClip?.delta ?? 0)
+    }
+
+    /// Holding space moves the shape whole, so every one of its edges is a candidate for
+    /// clipping and the offset lands on both ends at once.
+    private func clipWholeShape(_ current: DrawingSession) {
         let xs: [Double]
         let ys: [Double]
         let probes: [Point]
@@ -425,8 +586,12 @@ final class CanvasView: NSView {
     /// One copy key for whatever is on screen. A shape and the loupe are never both
     /// showing, so there is never a question of which one this means.
     private func copyCurrentValue() {
-        if let snappedBox {
-            copy(formatter.clipboard(box: snappedBox, format: preferences.copyFormat))
+        if let reading {
+            if showsGaps, let gaps = gapClipboard(of: reading) {
+                copy(gaps)
+                return
+            }
+            copy(formatter.clipboard(box: reading.box, format: preferences.copyFormat))
             return
         }
 
@@ -443,6 +608,27 @@ final class CanvasView: NSView {
             copy(formatter.clipboard(box: session.box(constrained: isConstrained,
                                                       fromCentre: isFromCentre),
                                      format: preferences.copyFormat))
+        }
+    }
+
+    /// The gaps on screen, labelled, because a bare pair of numbers does not say which
+    /// side is which. Nil when nothing was found either way, so the element's own size
+    /// gets copied rather than an empty string.
+    private func gapClipboard(of reading: ElementReading) -> String? {
+        let entries = gapDirections.compactMap { direction -> (label: String, points: Double)? in
+            guard let gap = reading.gaps[direction], gap.length >= 1 else { return nil }
+            return (label: Self.name(of: direction), points: gap.length)
+        }
+        guard !entries.isEmpty else { return nil }
+        return formatter.clipboard(gaps: entries)
+    }
+
+    private static func name(of direction: Direction) -> String {
+        switch direction {
+        case .left: return "left"
+        case .right: return "right"
+        case .up: return "up"
+        case .down: return "down"
         }
     }
 
@@ -468,13 +654,13 @@ final class CanvasView: NSView {
     }
 
     private func refreshHUD() {
-        if let snappedBox {
-            var parts = [formatter.display(box: snappedBox)]
-            if let left = snappedGaps[.left] { parts.append("left \(formatter.display(points: left))") }
-            if let right = snappedGaps[.right] { parts.append("right \(formatter.display(points: right))") }
-            hud.text = parts.joined(separator: "  ")
-            hud.anchor = NSPoint(x: snappedBox.origin.x + snappedBox.size.width,
-                                 y: snappedBox.origin.y)
+        // The gaps carry their own labels, drawn on the gaps themselves, so the readout
+        // stays the element's own size rather than repeating four numbers already on
+        // screen a few points away.
+        if let reading {
+            hud.text = formatter.display(box: reading.box)
+            hud.anchor = NSPoint(x: reading.box.origin.x + reading.box.size.width,
+                                 y: reading.box.origin.y)
             return
         }
 
@@ -493,6 +679,71 @@ final class CanvasView: NSView {
             hud.anchor = NSPoint(x: box.origin.x + box.size.width,
                                  y: box.origin.y + box.size.height)
         }
+    }
+
+    /// How far a tick reaches either side of the gap line, and how far the label sits
+    /// off it. A gap can be eight points wide, so the label goes beside the line rather
+    /// than in it, where a pill would cover the very thing it is measuring.
+    private static let tickReach: CGFloat = 5
+    private static let labelReach: CGFloat = 17
+
+    /// Each gap is drawn along the ray it was measured on, with a tick at both ends and
+    /// the number beside it. Running the line through the middle of the element instead
+    /// would put it somewhere the measurement never went.
+    private func drawGaps(of reading: ElementReading) {
+        let color = NSColor(hex: preferences.lineColorHex) ?? .systemRed
+
+        for direction in gapDirections {
+            guard let gap = reading.gaps[direction], gap.length >= 1 else { continue }
+            let horizontal = direction == .left || direction == .right
+
+            let start = horizontal ? NSPoint(x: gap.near, y: reading.probe.y)
+                                   : NSPoint(x: reading.probe.x, y: gap.near)
+            let end = horizontal ? NSPoint(x: gap.far, y: reading.probe.y)
+                                 : NSPoint(x: reading.probe.x, y: gap.far)
+
+            let path = NSBezierPath()
+            path.lineWidth = 1
+            path.move(to: start)
+            path.line(to: end)
+            // Ticks across both ends, so a gap narrower than its own label is still
+            // visibly bounded by the two edges it was measured between.
+            for point in [start, end] {
+                if horizontal {
+                    path.move(to: NSPoint(x: point.x, y: point.y - Self.tickReach))
+                    path.line(to: NSPoint(x: point.x, y: point.y + Self.tickReach))
+                } else {
+                    path.move(to: NSPoint(x: point.x - Self.tickReach, y: point.y))
+                    path.line(to: NSPoint(x: point.x + Self.tickReach, y: point.y))
+                }
+            }
+            color.setStroke()
+            path.stroke()
+
+            let middle = NSPoint(x: (start.x + end.x) / 2, y: (start.y + end.y) / 2)
+            let label = horizontal ? NSPoint(x: middle.x, y: middle.y - Self.labelReach)
+                                   : NSPoint(x: middle.x + Self.labelReach, y: middle.y)
+            drawPill(formatter.compact(points: gap.length), centredAt: label)
+        }
+    }
+
+    /// A gap label, in the same dark pill the readout uses. Drawn here rather than
+    /// through HUDView because four can be on screen at once and each one belongs to a
+    /// gap of its own rather than to the cursor.
+    private func drawPill(_ text: String, centredAt centre: NSPoint) {
+        let string = NSAttributedString(string: text, attributes: [
+            .font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .semibold),
+            .foregroundColor: NSColor.white,
+        ])
+        let size = string.size()
+        let padding: CGFloat = 5
+        let box = NSRect(x: centre.x - size.width / 2 - padding,
+                         y: centre.y - size.height / 2 - padding,
+                         width: size.width + padding * 2,
+                         height: size.height + padding * 2)
+        NSColor.black.withAlphaComponent(0.82).setFill()
+        NSBezierPath(roundedRect: box, xRadius: 5, yRadius: 5).fill()
+        string.draw(at: NSPoint(x: box.minX + padding, y: box.minY + padding))
     }
 
     override func draw(_ dirtyRect: NSRect) {
@@ -533,9 +784,9 @@ final class CanvasView: NSView {
             path.stroke()
         }
 
-        if let snappedBox {
-            let rect = NSRect(x: snappedBox.origin.x, y: snappedBox.origin.y,
-                              width: snappedBox.size.width, height: snappedBox.size.height)
+        if let reading {
+            let rect = NSRect(x: reading.box.origin.x, y: reading.box.origin.y,
+                              width: reading.box.size.width, height: reading.box.size.height)
             let snapColor = NSColor(hex: preferences.guideColorHex) ?? .systemBlue
             snapColor.setStroke()
             let outline = NSBezierPath(rect: rect)
@@ -543,6 +794,8 @@ final class CanvasView: NSView {
             outline.stroke()
             snapColor.withAlphaComponent(0.10).setFill()
             rect.fill()
+
+            if showsGaps { drawGaps(of: reading) }
         }
 
         guard let session else { return }

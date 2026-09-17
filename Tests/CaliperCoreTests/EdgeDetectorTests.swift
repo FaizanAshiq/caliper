@@ -80,3 +80,27 @@ func flatFieldHasNoEdges() {
     let detector = EdgeDetector(threshold: 0.12, runLength: 3)
     #expect(detector.bounds(around: (x: 25, y: 25), in: buffer) == nil)
 }
+
+@Test("a gap span says where the empty run is, not only how wide")
+func gapSpanPosition() {
+    let buffer = field(width: 200, height: 100, rects: [
+        PixelRect(x: 20, y: 30, width: 40, height: 20),
+        PixelRect(x: 92, y: 30, width: 40, height: 20),
+    ])
+    let detector = EdgeDetector(threshold: 0.12, runLength: 3)
+    let span = detector.gapSpan(from: (x: 40, y: 40), direction: .right, in: buffer)
+
+    // From the element's own right edge across to the far side of the empty run.
+    #expect(span?.near == 59)
+    #expect(span?.far == 91)
+    #expect(detector.gap(from: (x: 40, y: 40), direction: .right, in: buffer) == 32)
+}
+
+@Test("an element with nothing beyond it has no gap to report")
+func gapSpanNeedsANeighbour() {
+    let buffer = field(width: 200, height: 100,
+                       rects: [PixelRect(x: 20, y: 30, width: 40, height: 20)])
+    let detector = EdgeDetector(threshold: 0.12, runLength: 3)
+    #expect(detector.gapSpan(from: (x: 40, y: 40), direction: .right, in: buffer) == nil)
+    #expect(detector.gap(from: (x: 40, y: 40), direction: .right, in: buffer) == nil)
+}
