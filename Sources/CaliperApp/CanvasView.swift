@@ -372,68 +372,39 @@ final class CanvasView: NSView {
     /// For a thing, the gaps to its neighbours. For a space, the space's own width and
     /// height, because when you point at a gutter its width is the measurement you came
     /// for and the width of the card beyond it is not.
-    /// The empty space belonging to the region under the cursor, measured inward from
-    /// its own edges.
+    /// The region under the cursor, measured across or down.
     ///
-    /// Inward is what makes it a gap. Outward answered a different question: point at
-    /// the dark band around a card's artwork and be told how far away the next card is,
-    /// which misses by a whole level of the layout.
+    /// One number per axis, and always the region itself. Earlier versions walked
+    /// inward from both edges to report the two paddings at once, which was accurate
+    /// and wrong to want: at a card's corner all four walks reach its outer edges, so
+    /// pointing near the corner of a band got you the card and four numbers instead of
+    /// the band and one. Moving the cursor a little into the band you actually mean is
+    /// quicker than reading four labels to find the one you asked for.
     ///
-    /// When neither ray finds anything before the opposite edge, the region has nothing
-    /// inside it and the region itself is the answer. Point at the column between two
-    /// cards and that column is the gap between them. The test is empirical, which is
-    /// why there is no longer a guess about whether a region is a thing or a space.
-    private func insideSpans(_ box: PixelRect,
-                             horizontal: Bool,
-                             in frame: CapturedFrame) -> [Span] {
+    /// So: point at the top band of a card and Y is its top padding. Point at the
+    /// column between two cards and X is the gap between them. Point at a solid shape
+    /// and you get its size. Same rule every time, and no rays, because the region's
+    /// own bounds already came out of the edge walk that found it.
+    private func span(_ box: PixelRect, horizontal: Bool) -> Span? {
         let near = horizontal ? box.x : box.y
         let last = horizontal ? box.x + box.width - 1 : box.y + box.height - 1
-        let middle = horizontal ? box.y + box.height / 2 : box.x + box.width / 2
 
-        // A pixel inside the edge rather than on it. The origin is the reference the
-        // walk compares against, and on a rounded or antialiased edge that pixel is a
-        // blend of the region and whatever sits behind it.
-        let fromNear = horizontal ? (x: near + 1, y: middle) : (x: middle, y: near + 1)
-        let fromFar = horizontal ? (x: last - 1, y: middle) : (x: middle, y: last - 1)
-
-        let inward = detector.firstEdge(from: fromNear,
-                                        direction: horizontal ? .right : .down, in: frame)
-        let backward = detector.firstEdge(from: fromFar,
-                                          direction: horizontal ? .left : .up, in: frame)
-
-        func span(_ low: Int, _ high: Int, _ label: String) -> Span {
-            Span(horizontal: horizontal,
-                 gap: Gap(near: scale.points(fromBacking: Double(low)),
-                          far: scale.points(fromBacking: Double(high))),
-                 label: label)
-        }
-
-        // Nothing inside, so the region is the measurement. Exempt from the page
-        // ceiling: this is a region the detector found, not a walk that may have
-        // crossed an edge it never saw.
-        guard let inward, let backward, inward < last, backward > near else {
-            let whole = span(near, last + 1, horizontal ? "width" : "height")
-            return whole.gap.length > GapCredibility.hairline ? [whole] : []
-        }
-
-        return [span(near, inward + 1, horizontal ? "left" : "top"),
-                span(backward, last + 1, horizontal ? "right" : "bottom")]
-            .filter {
-                GapCredibility.isSpacing($0.gap.length,
-                                         screenSpan: horizontal ? Double(bounds.width)
-                                                                : Double(bounds.height))
-            }
+        let span = Span(horizontal: horizontal,
+                        gap: Gap(near: scale.points(fromBacking: Double(near)),
+                                 far: scale.points(fromBacking: Double(last + 1))),
+                        label: horizontal ? "width" : "height")
+        // A region a point thick is a rule, and labelling it answers nothing.
+        return span.gap.length > GapCredibility.hairline ? span : nil
     }
 
     private func spans(of reading: ElementReading) -> [Span] {
-        guard let frozenFrame else { return [] }
-        let box = reading.pixels
-        // Two pixels across leaves no room to step inside both edges.
-        guard box.width > 2, box.height > 2 else { return [] }
-
         var result: [Span] = []
-        if showsVerticalGaps { result += insideSpans(box, horizontal: false, in: frozenFrame) }
-        if showsHorizontalGaps { result += insideSpans(box, horizontal: true, in: frozenFrame) }
+        if showsVerticalGaps, let down = span(reading.pixels, horizontal: false) {
+            result.append(down)
+        }
+        if showsHorizontalGaps, let across = span(reading.pixels, horizontal: true) {
+            result.append(across)
+        }
         return result
     }
 
