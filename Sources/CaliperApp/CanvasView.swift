@@ -418,12 +418,20 @@ final class CanvasView: NSView {
         let midX = box.x + box.width / 2
         let midY = box.y + box.height / 2
 
+        // Each ray starts one pixel inside the edge rather than on it. The origin
+        // pixel is the reference the walk compares against, and on an antialiased or
+        // rounded edge that pixel is a blend of the element and whatever is behind it.
+        // Taking the blend as the reference made the first true pixel of the padding
+        // count as a change, so the walk stopped at once and the side either read a
+        // point or was dropped as a hairline.
+        guard box.width > 2, box.height > 2 else { return [] }
+
         let sides: [(label: String, horizontal: Bool, near: Int, limit: Int,
                      origin: (x: Int, y: Int), direction: Direction)] = [
-            ("top", false, box.y, lastY, (midX, box.y), .down),
-            ("right", true, lastX, box.x, (lastX, midY), .left),
-            ("bottom", false, lastY, box.y, (midX, lastY), .up),
-            ("left", true, box.x, lastX, (box.x, midY), .right),
+            ("top", false, box.y, lastY, (midX, box.y + 1), .down),
+            ("right", true, lastX, box.x, (lastX - 1, midY), .left),
+            ("bottom", false, lastY, box.y, (midX, lastY - 1), .up),
+            ("left", true, box.x, lastX, (box.x + 1, midY), .right),
         ]
 
         var result: [Span] = []
@@ -995,7 +1003,7 @@ final class CanvasView: NSView {
             // In gap mode the gaps are the answer, so the outline goes. It competed
             // with four labels for attention and a tall blue column over a gutter was
             // the worst of it.
-            if !showsGaps, !showsPadding {
+            if !showsGaps {
                 let rect = NSRect(x: reading.box.origin.x, y: reading.box.origin.y,
                                   width: reading.box.size.width, height: reading.box.size.height)
                 snapColor.setStroke()
