@@ -36,10 +36,6 @@ func ceilingIsInclusive() {
     #expect(!GapCredibility.isSpacing(768.5, screenSpan: across))
 }
 
-@Test("the ceiling and the region split are the same number on purpose")
-func oneRatioForBothJudgements() {
-    #expect(GapCredibility.pageRatio == RegionKind.spaceRatio)
-}
 
 @Test("before the first layout only the hairline floor applies")
 func noScreenYetForGaps() {

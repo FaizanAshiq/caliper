@@ -19,13 +19,11 @@ public enum GapCredibility {
 
     /// Above this fraction of the screen along the axis, the gap is the page.
     ///
-    /// The same ratio RegionKind uses to tell a thing from the space around it, for the
-    /// same reason, so the two cannot drift apart. A card on a light page whose own
-    /// background is within the luminance threshold of that page has no edge the
-    /// detector can see, so a gap measured towards it runs past it and on to whatever
-    /// differs next, which may be most of the way down the screen. Spacing between two
-    /// things in one layout is never that.
-    public static let pageRatio: Double = RegionKind.spaceRatio
+    /// A region on a light page whose own background sits within the luminance
+    /// threshold of that page has no edge the detector can see, so a ray measured
+    /// towards it runs straight past and on to whatever differs next, which may be most
+    /// of the way across the screen. Spacing inside one region is never that.
+    public static let pageRatio: Double = 0.4
 
     /// `screenSpan` is the screen's size along the axis the gap runs on. Zero or less
     /// means the screen is not known yet, which only suppresses the ceiling rather than

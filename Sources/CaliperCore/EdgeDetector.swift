@@ -78,33 +78,4 @@ public struct EdgeDetector: Sendable {
         return PixelRect(x: left, y: top, width: right - left + 1, height: bottom - top + 1)
     }
 
-    /// The empty run between the element under the cursor and the next one along, as
-    /// the pair of coordinates it spans rather than only its length.
-    ///
-    /// Both values are on the axis the direction runs along: x for left and right, y
-    /// for up and down. Drawing a gap needs to know where it sits, and it has to be
-    /// drawn along the same ray it was measured on or the line will not match the
-    /// number beside it.
-    public func gapSpan(from origin: (x: Int, y: Int),
-                        direction: Direction,
-                        in buffer: PixelSampling) -> (near: Int, far: Int)? {
-        guard let near = firstEdge(from: origin, direction: direction, in: buffer) else { return nil }
-        let move = step(direction)
-        let horizontal = direction == .left || direction == .right
-
-        let probeX = horizontal ? near + move.dx : origin.x
-        let probeY = horizontal ? origin.y : near + move.dy
-        guard probeX >= 0, probeY >= 0, probeX < buffer.width, probeY < buffer.height else { return nil }
-
-        guard let far = firstEdge(from: (probeX, probeY), direction: direction, in: buffer) else { return nil }
-        return (near: near, far: far)
-    }
-
-    /// The empty distance between the element under the cursor and the next one along.
-    public func gap(from origin: (x: Int, y: Int),
-                    direction: Direction,
-                    in buffer: PixelSampling) -> Int? {
-        guard let span = gapSpan(from: origin, direction: direction, in: buffer) else { return nil }
-        return abs(span.far - span.near)
-    }
 }
