@@ -80,14 +80,33 @@ public struct EdgeDetector: Sendable {
         return true
     }
 
+    /// The region the origin sits in, closed by the edge of the screen wherever
+    /// nothing else closes it.
+    ///
+    /// Needing all four walks to land was the same mistake as the run length: a
+    /// truthful answer thrown away for failing a test that was never the question.
+    /// A full bleed dark page runs off the top and the right of the screen, so the
+    /// gutter between a thumbnail and its title had a left and a right and no size
+    /// at all, and X said nothing where it had the number in hand. The screen edge
+    /// closes a region the way a boundary does, which is what the rest of the app
+    /// already believes: a drag clips onto it like any other edge.
+    ///
+    /// Four walks finding nothing is still nothing. That is a flat field, where
+    /// there is no region under the cursor to report.
     public func bounds(around origin: (x: Int, y: Int), in buffer: PixelSampling) -> PixelRect? {
-        guard let left = firstEdge(from: origin, direction: .left, in: buffer),
-              let right = firstEdge(from: origin, direction: .right, in: buffer),
-              let top = firstEdge(from: origin, direction: .up, in: buffer),
-              let bottom = firstEdge(from: origin, direction: .down, in: buffer) else {
-            return nil
-        }
-        return PixelRect(x: left, y: top, width: right - left + 1, height: bottom - top + 1)
+        let left = firstEdge(from: origin, direction: .left, in: buffer)
+        let right = firstEdge(from: origin, direction: .right, in: buffer)
+        let top = firstEdge(from: origin, direction: .up, in: buffer)
+        let bottom = firstEdge(from: origin, direction: .down, in: buffer)
+
+        guard left != nil || right != nil || top != nil || bottom != nil else { return nil }
+
+        let x = left ?? 0
+        let y = top ?? 0
+        return PixelRect(x: x,
+                         y: y,
+                         width: (right ?? buffer.width - 1) - x + 1,
+                         height: (bottom ?? buffer.height - 1) - y + 1)
     }
 
 }

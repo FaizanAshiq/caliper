@@ -119,3 +119,40 @@ func runLengthFollowsTheScale() {
     #expect(EdgeDetector(threshold: 0.12, scale: .retina).runLength == 2)
     #expect(EdgeDetector(threshold: 0.12, scale: .nonRetina).runLength == 1)
 }
+
+/// A dark page the way YouTube draws one: a full bleed #0F0F0F background with a
+/// bright thumbnail and bright text either side of a gutter, and that gutter running
+/// off the top and the bottom of the screen because the page does.
+private func fullBleedDarkPage() -> ArrayPixelBuffer {
+    let width = 200, height = 200
+    var values = [Double](repeating: 0.0588, count: width * height)
+    for y in 0 ..< height {
+        for x in 40 ..< 90 { values[y * width + x] = 0.67 }
+        for x in 110 ..< 150 { values[y * width + x] = 0.67 }
+    }
+    return ArrayPixelBuffer(width: width, height: height, luminances: values)
+}
+
+@Test("a gutter that runs off the screen still has a width")
+func regionTouchingTheFrameEdge() {
+    let bounds = EdgeDetector(threshold: 0.08, scale: .retina)
+        .bounds(around: (x: 100, y: 100), in: fullBleedDarkPage())
+    #expect(bounds?.x == 90)
+    #expect(bounds?.width == 20)
+    // Nothing closes it above or below, so the frame does.
+    #expect(bounds?.y == 0)
+    #expect(bounds?.height == 200)
+}
+
+@Test("a region open on one side is closed by the frame on that side")
+func regionOpenToTheRight() {
+    var values = [Double](repeating: 0.0588, count: 200 * 200)
+    for y in 0 ..< 200 {
+        for x in 40 ..< 90 { values[y * 200 + x] = 0.67 }
+    }
+    let buffer = ArrayPixelBuffer(width: 200, height: 200, luminances: values)
+    let bounds = EdgeDetector(threshold: 0.08, scale: .retina)
+        .bounds(around: (x: 150, y: 100), in: buffer)
+    #expect(bounds?.x == 90)
+    #expect(bounds?.width == 110)
+}
