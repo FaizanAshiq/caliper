@@ -15,6 +15,18 @@ public struct EdgeDetector: Sendable {
         self.runLength = runLength
     }
 
+    /// A boundary counts once it has held for one logical point, which is however
+    /// many backing pixels that display puts in a point.
+    ///
+    /// A fixed run of three pixels was a point and a half on a retina display, and a
+    /// hairline is a point. The rule between two table rows could never satisfy it, at
+    /// any threshold, so a row had no top and no bottom and the reading ran the whole
+    /// table instead. Counting in points makes the thinnest boundary anything draws
+    /// the unit, which is what the run was reaching for and could not say in pixels.
+    public init(threshold: Double, scale: Scale) {
+        self.init(threshold: threshold, runLength: max(1, Int(scale.factor.rounded())))
+    }
+
     private func step(_ direction: Direction) -> (dx: Int, dy: Int) {
         switch direction {
         case .left:  return (-1, 0)

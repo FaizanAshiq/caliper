@@ -66,3 +66,11 @@ func hotkeyModifierOrder() {
 func hotkeyUnknownKey() {
     #expect(HotKeyBinding(keyCode: 250, modifiers: []).displayString == "Key 250")
 }
+
+/// Measured off a real table: a one point rule of #DEDEE0 on a #F8F8F8 row is a
+/// luminance difference of 0.1013. A default above that finds the table and not the
+/// row, which is the commonest thing anyone points at.
+@Test("the default sensitivity is under a table rule")
+func defaultSensitivityCatchesARule() {
+    #expect(Preferences.defaults.edgeThreshold < 0.1013)
+}

@@ -62,6 +62,10 @@ public struct Preferences: Equatable, Sendable, Codable {
     public var loupeZoom: Int
     public var copyFormat: CopyFormat
     /// Luminance difference, 0 to 1, that counts as an element boundary.
+    ///
+    /// The default is set by the commonest boundary in a modern interface: the rule
+    /// between two table rows, which measures around a tenth on a near white row.
+    /// A default above that found the whole table and called it one element.
     public var edgeThreshold: Double
     /// Whether the overlay shows the strip of shortcuts along the bottom. On until
     /// someone presses H, because a first run with no hint of what the keys do is
@@ -75,7 +79,7 @@ public struct Preferences: Equatable, Sendable, Codable {
         guideColorHex: "0A84FF",
         loupeZoom: 8,
         copyFormat: .value,
-        edgeThreshold: 0.12,
+        edgeThreshold: 0.08,
         showShortcuts: true
     )
 
