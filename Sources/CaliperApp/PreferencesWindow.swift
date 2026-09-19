@@ -10,7 +10,7 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate {
     private let backingPixelsCheckbox = NSButton(checkboxWithTitle: "Show backing pixels", target: nil, action: nil)
     private let zoomSlider = NSSlider(value: 8, minValue: 2, maxValue: 24, target: nil, action: nil)
     private let formatPopUp = NSPopUpButton()
-    private let thresholdSlider = NSSlider(value: 0.12, minValue: 0.02, maxValue: 0.5, target: nil, action: nil)
+    private let thresholdSlider = NSSlider(value: 0.08, minValue: 0.02, maxValue: 0.5, target: nil, action: nil)
     private let hotKeyRecorder: HotKeyRecorderView
     private let screenAccessButton = NSButton(title: "", target: nil, action: nil)
 

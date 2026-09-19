@@ -280,7 +280,7 @@ final class CanvasView: NSView {
     private static let thresholdRange: ClosedRange<Double> = 0.01 ... 0.9
 
     private var detector: EdgeDetector {
-        EdgeDetector(threshold: edgeThreshold, runLength: 3)
+        EdgeDetector(threshold: edgeThreshold, scale: scale)
     }
 
     /// Called on every canvas when the threshold is changed on any one of them.

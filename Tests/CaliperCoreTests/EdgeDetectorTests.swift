@@ -3,7 +3,7 @@ import Testing
 
 /// Builds a white field containing solid dark rectangles.
 private func field(width: Int, height: Int, rects: [PixelRect]) -> ArrayPixelBuffer {
-    var values = [Double](repeating: 1.0, count: width * height)
+    var values = [Double](repeating: 0.9725, count: width * height)
     for rect in rects {
         for y in rect.y ..< (rect.y + rect.height) {
             for x in rect.x ..< (rect.x + rect.width) {
@@ -72,4 +72,87 @@ func flatFieldHasNoEdges() {
     #expect(detector.bounds(around: (x: 25, y: 25), in: buffer) == nil)
 }
 
+/// A table the way a browser draws one at 2x, every number measured off a real
+/// screenshot rather than invented: rows of #F8F8F8 112 backing pixels tall, parted
+/// by a one point rule that is two pixels of #DEDEE0, inside a dark card. The rule
+/// is a luminance difference of 0.1013, and two pixels is all it ever gets.
+private func tableRows() -> ArrayPixelBuffer {
+    let width = 400, height = 700
+    var values = [Double](repeating: 0.9725, count: width * height)
+    for y in 0 ..< height {
+        for x in 0 ..< width where x < 4 || x >= width - 4 { values[y * width + x] = 0.2 }
+    }
+    for y in 0 ..< height where y < 4 || y >= height - 4 {
+        for x in 0 ..< width { values[y * width + x] = 0.2 }
+    }
+    for rule in 1 ... 5 {
+        for y in (rule * 112) ..< (rule * 112 + 2) {
+            for x in 4 ..< (width - 4) { values[y * width + x] = 0.8712 }
+        }
+    }
+    return ArrayPixelBuffer(width: width, height: height, luminances: values)
+}
 
+@Test("a table row is found, not the whole table it sits in")
+func tableRowBounds() {
+    let buffer = tableRows()
+    let bounds = EdgeDetector(threshold: 0.09, scale: .retina)
+        .bounds(around: (x: 200, y: 280), in: buffer)
+    #expect(bounds?.height == 110)
+    #expect(bounds?.y == 226)
+}
+
+/// The bug this replaced: three pixels is a point and a half, so the rule between two
+/// rows never held long enough to count and the walk ran on to the edge of the card.
+@Test("a fixed three pixel run misses the row at every threshold")
+func fixedRunMissesTheRow() {
+    let buffer = tableRows()
+    for step in 1 ... 90 {
+        let bounds = EdgeDetector(threshold: Double(step) / 100, runLength: 3)
+            .bounds(around: (x: 200, y: 280), in: buffer)
+        #expect(bounds?.height != 110)
+    }
+}
+
+@Test("the run is one point, in whatever pixels that display makes a point")
+func runLengthFollowsTheScale() {
+    #expect(EdgeDetector(threshold: 0.12, scale: .retina).runLength == 2)
+    #expect(EdgeDetector(threshold: 0.12, scale: .nonRetina).runLength == 1)
+}
+
+/// A dark page the way YouTube draws one: a full bleed #0F0F0F background with a
+/// bright thumbnail and bright text either side of a gutter, and that gutter running
+/// off the top and the bottom of the screen because the page does.
+private func fullBleedDarkPage() -> ArrayPixelBuffer {
+    let width = 200, height = 200
+    var values = [Double](repeating: 0.0588, count: width * height)
+    for y in 0 ..< height {
+        for x in 40 ..< 90 { values[y * width + x] = 0.67 }
+        for x in 110 ..< 150 { values[y * width + x] = 0.67 }
+    }
+    return ArrayPixelBuffer(width: width, height: height, luminances: values)
+}
+
+@Test("a gutter that runs off the screen still has a width")
+func regionTouchingTheFrameEdge() {
+    let bounds = EdgeDetector(threshold: 0.08, scale: .retina)
+        .bounds(around: (x: 100, y: 100), in: fullBleedDarkPage())
+    #expect(bounds?.x == 90)
+    #expect(bounds?.width == 20)
+    // Nothing closes it above or below, so the frame does.
+    #expect(bounds?.y == 0)
+    #expect(bounds?.height == 200)
+}
+
+@Test("a region open on one side is closed by the frame on that side")
+func regionOpenToTheRight() {
+    var values = [Double](repeating: 0.0588, count: 200 * 200)
+    for y in 0 ..< 200 {
+        for x in 40 ..< 90 { values[y * 200 + x] = 0.67 }
+    }
+    let buffer = ArrayPixelBuffer(width: 200, height: 200, luminances: values)
+    let bounds = EdgeDetector(threshold: 0.08, scale: .retina)
+        .bounds(around: (x: 150, y: 100), in: buffer)
+    #expect(bounds?.x == 90)
+    #expect(bounds?.width == 110)
+}
