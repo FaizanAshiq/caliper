@@ -1,8 +1,8 @@
 class Caliper < Formula
   desc "Menu bar tool for measuring distances on screen"
   homepage "https://github.com/FaizanAshiq/caliper"
-  url "https://github.com/FaizanAshiq/caliper/archive/refs/tags/v0.1.4.tar.gz"
-  sha256 "2629407e30a8e713717c926292ce3e3b69abb18afb756d1d0ce3d6bad6a27f78"
+  url "https://github.com/FaizanAshiq/caliper/archive/refs/tags/v0.1.5.tar.gz"
+  sha256 "60584f3ac98ff3a3b260dfc156e8b36d40c33bf9c95284323e2154ef2b36cf0a"
   license "MIT"
   depends_on macos: :sonoma
 
