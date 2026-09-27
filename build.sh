@@ -15,6 +15,7 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 
 cp ".build/$CONFIG/CaliperApp" "$APP/Contents/MacOS/Caliper"
 cp Resources/Info.plist "$APP/Contents/Info.plist"
+cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 
 # Sign with the local identity when there is one, because an ad hoc signature is a
 # hash of the binary: every rebuild becomes a new app as far as macOS is concerned,
